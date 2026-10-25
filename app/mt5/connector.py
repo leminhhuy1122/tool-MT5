@@ -78,27 +78,19 @@ class MT5Connector:
 
     @property
     def is_connected(self) -> bool:
-        """Kiểm tra MT5 đang kết nối hay không, tự động khôi phục nếu terminal đang chạy."""
+        """Kiểm tra MT5 đang kết nối hay không."""
+        if not self._connected:
+            return False
+        # Kiểm tra thực tế bằng terminal_info
         try:
             info = mt5.terminal_info()
-            if info is not None and info.connected:
-                self._connected = True
-                return True
+            if info is None:
+                self._connected = False
+                return False
+            return True
         except Exception:
-            pass
-
-        # Nếu chưa kết nối, thử gắn kết nối trực tiếp vào terminal đang chạy
-        try:
-            if mt5.initialize():
-                info = mt5.terminal_info()
-                if info is not None:
-                    self._connected = True
-                    return True
-        except Exception:
-            pass
-
-        self._connected = False
-        return False
+            self._connected = False
+            return False
 
     def connect(self) -> ConnectionResult:
         """
@@ -109,29 +101,12 @@ class MT5Connector:
         """
         log.info("Đang kết nối MetaTrader 5...")
 
-        # 1. Thử kết nối trực tiếp vào terminal đang chạy (nhanh & ổn định nhất)
-        try:
-            if mt5.initialize():
-                info = mt5.terminal_info()
-                acc = mt5.account_info()
-                if info is not None and acc is not None:
-                    self._connected = True
-                    log.info("✓ Đã gắn kết nối MT5 terminal đang chạy (Login: %s, Server: %s)", acc.login, acc.server)
-                    return ConnectionResult(success=True, message=f"Đã kết nối MetaTrader 5 (Account: {acc.login})")
-        except Exception as e:
-            log.warning("Thử initialize() không tham số thất bại: %s", e)
-
-        # 2. Chuẩn bị tham số khởi tạo nếu cần khởi động hoặc đăng nhập cụ thể
+        # Chuẩn bị tham số khởi tạo
         init_kwargs: dict = {}
 
         term_path = (self._config.terminal_path or "").strip().strip("'\"")
-        if term_path and os.path.isfile(term_path):
+        if term_path and (os.path.isfile(term_path) or term_path.lower().endswith(".exe")):
             init_kwargs["path"] = term_path
-        elif not term_path:
-            # Kiểm tra đường dẫn mặc định nếu có
-            default_path = os.path.expanduser(r"~\AppData\Roaming\DBG Markets MetaTrader 5\terminal64.exe")
-            if os.path.isfile(default_path):
-                init_kwargs["path"] = default_path
 
         if self._config.login:
             init_kwargs["login"] = self._config.login

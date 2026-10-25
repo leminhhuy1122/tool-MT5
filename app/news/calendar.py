@@ -71,6 +71,8 @@ class NewsManager:
         except Exception as e:
             log.warning("Không thể tải lịch kinh tế từ ForexFactory (%s). Sử dụng dữ liệu cache gần nhất.", e)
             with self._lock:
+                # Đặt lại _last_fetched_at lùi 5 phút để tránh gửi request dồn dập khi bị rate-limit
+                self._last_fetched_at = now - timedelta(seconds=max(0, self.cache_ttl_seconds - 300))
                 return list(self._cached_events)
 
     def _parse_event(self, item: dict) -> Optional[EconomicEvent]:

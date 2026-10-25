@@ -52,8 +52,12 @@ logs/
 
 # Database & Scratch
 *.db
+*.db-*
+*.sqlite
 *.sqlite3
-data/*.db
+data/*.db*
+data/*.sqlite*
+data/backups/
 scratch/
 
 # Jupyter & MyPy
