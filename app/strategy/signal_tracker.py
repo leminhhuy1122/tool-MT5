@@ -212,8 +212,13 @@ class SignalTracker:
                 if sig.is_buy:
                     if high_price >= sig.take_profit_1:
                         sig.status = SignalStatus.TP_REACHED
+                        # Tự động kéo SL về hòa vốn (Breakeven) bảo vệ vốn và lợi nhuận
+                        sig.stop_loss = sig.entry_price
                         changed_signals.append(sig)
-                        log.info("Tín hiệu BUY [%s] ĐẠT TAKE PROFIT 1 (%.2f)", sig.signal_id, sig.take_profit_1)
+                        log.info(
+                            "Tín hiệu BUY [%s] ĐẠT TAKE PROFIT 1 (%.2f) -> Ăn TP thành công! Dời SL về hòa vốn (%.2f)",
+                            sig.signal_id, sig.take_profit_1, sig.entry_price,
+                        )
                     elif low_price <= sig.stop_loss:
                         sig.status = SignalStatus.SL_REACHED
                         changed_signals.append(sig)
@@ -222,8 +227,13 @@ class SignalTracker:
                 elif sig.is_sell:
                     if low_price <= sig.take_profit_1:
                         sig.status = SignalStatus.TP_REACHED
+                        # Tự động kéo SL về hòa vốn (Breakeven) bảo vệ vốn và lợi nhuận
+                        sig.stop_loss = sig.entry_price
                         changed_signals.append(sig)
-                        log.info("Tín hiệu SELL [%s] ĐẠT TAKE PROFIT 1 (%.2f)", sig.signal_id, sig.take_profit_1)
+                        log.info(
+                            "Tín hiệu SELL [%s] ĐẠT TAKE PROFIT 1 (%.2f) -> Ăn TP thành công! Dời SL về hòa vốn (%.2f)",
+                            sig.signal_id, sig.take_profit_1, sig.entry_price,
+                        )
                     elif high_price >= sig.stop_loss:
                         sig.status = SignalStatus.SL_REACHED
                         changed_signals.append(sig)

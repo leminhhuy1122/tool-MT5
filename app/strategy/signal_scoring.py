@@ -141,28 +141,36 @@ def calculate_signal_score(
             structure_score += 10.0
             details.append("Retest Support/Resistance Zone (+10)")
 
-    # Fallback to candidate's own structure components if h1_structure not fully passed
-    if structure_score == 0.0 and candidate.score_components:
-        structure_score = min(
+    # Check SMC & Candidate Structure Confluence
+    if candidate.score_components:
+        smc_score = (
             candidate.score_components.get("bos", 0.0) +
             candidate.score_components.get("retest", 0.0) +
             candidate.score_components.get("support", 0.0) +
-            candidate.score_components.get("resistance", 0.0),
-            25.0
+            candidate.score_components.get("resistance", 0.0) +
+            candidate.score_components.get("fvg", 0.0) +
+            candidate.score_components.get("order_block", 0.0) +
+            candidate.score_components.get("liquidity_sweep", 0.0)
         )
-        if structure_score > 0:
-            details.append(f"Setup Structure Components (+{structure_score:.0f})")
+        if smc_score > 0:
+            if structure_score == 0.0 or any(k in candidate.score_components for k in ("liquidity_sweep", "fvg", "order_block")):
+                structure_score = max(structure_score, min(smc_score, 25.0))
+                if any(k in candidate.score_components for k in ("liquidity_sweep", "fvg", "order_block")):
+                    details.append(f"SMC Structural Confluence (+{structure_score:.0f})")
+                else:
+                    details.append(f"Setup Structure Components (+{structure_score:.0f})")
 
     structure_score = min(structure_score, 25.0)
 
-    # 3. Technical Indicators (Max 20)
+    # 3. Technical Indicators & Price Action (Max 20)
     indicator_score = 0.0
     if candidate.score_components:
         ema_comp = candidate.score_components.get("ema", 0.0)
         rsi_comp = candidate.score_components.get("rsi", 0.0)
-        indicator_score = min(ema_comp + rsi_comp, 20.0)
+        pa_comp = candidate.score_components.get("price_action", 0.0)
+        indicator_score = min(ema_comp + rsi_comp + pa_comp, 20.0)
         if indicator_score > 0:
-            details.append(f"Indicators Confluence (EMA/RSI: +{indicator_score:.0f})")
+            details.append(f"Indicators/Price Action Confluence (+{indicator_score:.0f})")
     else:
         indicator_score = 10.0
 

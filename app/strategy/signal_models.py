@@ -109,14 +109,44 @@ class TradingSignal:
         return (
             f"[{self.signal_id}] {self.direction.value} {self.symbol}\n"
             f"  Entry: {self.entry_zone_low:.2f} – {self.entry_zone_high:.2f}\n"
-            f"  SL: {self.stop_loss:.2f} ({self.sl_distance:.1f} pts)\n"
-            f"  TP1: {self.take_profit_1:.2f} ({self.tp_distance:.1f} pts)\n"
+            f"  SL: {self.stop_loss:.2f} ({self.sl_distance:.1f} giá)\n"
+            f"  TP1: {self.take_profit_1:.2f} ({self.tp_distance:.1f} giá - Tỷ lệ ăn cao)\n"
+            f"  TP2: {self.take_profit_2:.2f} (Kỳ vọng mở rộng)\n"
             f"  R:R: 1:{self.risk_reward_ratio:.1f}\n"
             f"  Score: {self.score:.0f}/100 ({self.confidence})\n"
             f"  Setup: {self.setup_type}\n"
             f"  Reasons: {', '.join(self.reasons)}\n"
             f"  Invalidation: {self.invalidation}"
         )
+
+    def to_dict(self) -> dict:
+        """Chuyển đổi TradingSignal thành dict để lưu trữ hoặc truyền qua API."""
+        return {
+            "signal_id": self.signal_id,
+            "strategy_version": self.strategy_version,
+            "direction": self.direction.value,
+            "status": self.status.value,
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "entry_price": self.entry_price,
+            "entry_zone_high": self.entry_zone_high,
+            "entry_zone_low": self.entry_zone_low,
+            "stop_loss": self.stop_loss,
+            "take_profit_1": self.take_profit_1,
+            "take_profit_2": self.take_profit_2,
+            "risk_reward_ratio": self.risk_reward_ratio,
+            "sl_distance": self.sl_distance,
+            "tp_distance": self.tp_distance,
+            "score": self.score,
+            "confidence": self.confidence,
+            "trend_h4": self.trend_h4,
+            "trend_h1": self.trend_h1,
+            "setup_type": self.setup_type,
+            "reasons": self.reasons,
+            "invalidation": self.invalidation,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> "TradingSignal":

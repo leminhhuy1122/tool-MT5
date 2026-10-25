@@ -188,10 +188,11 @@ class SignalEngine:
                 entry_zone_low = candidate.entry_price - (cushion * 0.5)
                 entry_zone_high = candidate.entry_price + cushion
 
-            # TP1 và TP2 (mở rộng thêm 50% khoảng cách TP)
-            tp1 = candidate.take_profit
-            tp_dist = candidate.tp_distance
-            tp2 = candidate.entry_price + (tp_dist * 1.5) if candidate_direction == SignalDirection.BUY else candidate.entry_price - (tp_dist * 1.5)
+            # Cấu trúc TP1 (10-12 giá: tỷ lệ ăn TP cao, kéo BE) và TP2 (20-24 giá: gồng lời tối đa)
+            tp1 = candidate.tp1
+            tp2 = candidate.take_profit
+            tp1_dist = abs(candidate.entry_price - tp1)
+            sl_dist = candidate.sl_distance
 
             # Ghép danh sách lý do
             all_reasons = list(candidate.reasons)
@@ -212,8 +213,8 @@ class SignalEngine:
                 take_profit_1=round(tp1, 2),
                 take_profit_2=round(tp2, 2),
                 risk_reward_ratio=round(candidate.risk_reward, 2),
-                sl_distance=round(candidate.sl_distance, 2),
-                tp_distance=round(tp_dist, 2),
+                sl_distance=round(sl_dist, 2),
+                tp_distance=round(tp1_dist, 2),
                 score=round(score_res.total_score, 1),
                 confidence=score_res.confidence,
                 trend_h4=h4_trend.value,
