@@ -1,0 +1,187 @@
+// VietKey Gold AI — API Service Layer
+// Connects directly to real FastAPI Backend (MT5 + SQLite)
+
+import type {
+  MarketOverviewData,
+  PerformanceData,
+  SignalItem,
+  StatusCardData,
+  SystemMonitoringData,
+  NewsCalendarData,
+  BroadcastNewsPayload,
+  TelegramStatusData,
+} from '../types';
+
+const API_BASE = '/api/v1';
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `API error ${res.status}: ${res.statusText}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `API error ${res.status}: ${res.statusText}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+export const api = {
+  /**
+   * Lấy dữ liệu tổng quan thẻ trạng thái từ MT5 và hệ thống.
+   */
+  async getStatusCards(): Promise<StatusCardData> {
+    return fetchJson<StatusCardData>(`${API_BASE}/dashboard/overview`);
+  },
+
+  /**
+   * Lấy phân tích cấu trúc thị trường thực tế đa khung thời gian.
+   */
+  async getMarketOverview(): Promise<MarketOverviewData> {
+    return fetchJson<MarketOverviewData>(`${API_BASE}/market/overview`);
+  },
+
+  /**
+   * Lấy danh sách tín hiệu thực tế từ SQLite Database.
+   */
+  async getSignals(limit: number = 20): Promise<SignalItem[]> {
+    return fetchJson<SignalItem[]>(`${API_BASE}/signals?limit=${limit}`);
+  },
+
+  /**
+   * Lấy chi tiết một tín hiệu theo ID từ SQLite Database.
+   */
+  async getSignalDetail(signalId: string): Promise<SignalItem> {
+    return fetchJson<SignalItem>(`${API_BASE}/signals/${encodeURIComponent(signalId)}`);
+  },
+
+  /**
+   * Lấy thông số tài nguyên hệ thống thực tế (CPU, RAM, Uptime qua psutil).
+   */
+  async getSystemMetrics(): Promise<SystemMonitoringData> {
+    return fetchJson<SystemMonitoringData>(`${API_BASE}/system/metrics`);
+  },
+
+  /**
+   * Lấy thống kê hiệu suất thực tế từ outcomes trong SQLite.
+   */
+  async getPerformance(): Promise<PerformanceData> {
+    return fetchJson<PerformanceData>(`${API_BASE}/performance`);
+  },
+
+  /**
+   * Lấy lịch kinh tế và vùng an toàn tin đỏ từ ForexFactory engine.
+   */
+  async getNewsCalendar(): Promise<NewsCalendarData> {
+    return fetchJson<NewsCalendarData>(`${API_BASE}/news/calendar`);
+  },
+
+  // =========================================================================
+  // Admin Action Methods (Phát tin, gửi lại lệnh, kiểm tra Telegram)
+  // =========================================================================
+
+  /**
+   * Admin bấm gửi lại một tín hiệu giao dịch lên Kênh Telegram.
+   */
+  async adminResendSignal(signalId: string): Promise<{ ok: boolean; message: string }> {
+    return postJson<{ ok: boolean; message: string }>(`${API_BASE}/admin/resend-signal`, {
+      signal_id: signalId,
+    });
+  },
+
+  /**
+   * Admin bắn bản tin kinh tế & dự báo AI lên Kênh Telegram.
+   */
+  async adminBroadcastNews(payload: BroadcastNewsPayload): Promise<{ ok: boolean; message: string }> {
+    return postJson<{ ok: boolean; message: string }>(`${API_BASE}/admin/broadcast-news`, payload);
+  },
+
+  /**
+   * Admin gửi thông báo nhanh tùy chỉnh lên Kênh Telegram.
+   */
+  async adminBroadcastCustom(message: string): Promise<{ ok: boolean; message: string }> {
+    return postJson<{ ok: boolean; message: string }>(`${API_BASE}/admin/broadcast-custom`, {
+      message,
+    });
+  },
+
+  /**
+   * Lấy trạng thái hoạt động của Telegram Notifier.
+   */
+  async getTelegramStatus(): Promise<TelegramStatusData> {
+    return fetchJson<TelegramStatusData>(`${API_BASE}/telegram/status`);
+  },
+
+  /**
+   * Gửi tin nhắn kiểm tra kết nối Telegram Bot.
+   */
+  async testTelegramConnection(): Promise<{ ok: boolean; message: string }> {
+    return postJson<{ ok: boolean; message: string }>(`${API_BASE}/telegram/test`, {});
+  },
+
+  // =========================================================================
+  // AI Financial Newsroom Methods (Tạo Lịch Kinh Tế, Bài Báo Vàng & Cấu Hình AI)
+  // =========================================================================
+
+  /**
+   * Tự động tổng hợp Bản tin Lịch Kinh Tế trong ngày (Chuẩn Ảnh 1).
+   */
+  async generateCalendarDigest(useAi: boolean = true, dateStr?: string): Promise<{ ok: boolean; content: string; has_openai: boolean }> {
+    return postJson<{ ok: boolean; content: string; has_openai: boolean }>(`${API_BASE}/news/generate-digest`, {
+      use_ai: useAi,
+      date: dateStr,
+    });
+  },
+
+  /**
+   * Tự động tạo Bài báo Điểm tin Vàng SJC & Thế Giới (Chuẩn Ảnh 2).
+   */
+  async generateGoldArticle(payload?: { sjc_buy?: number; sjc_sell?: number; use_ai?: boolean; current_price?: number; change_pct?: number }): Promise<{ ok: boolean; content: string; has_openai: boolean }> {
+    return postJson<{ ok: boolean; content: string; has_openai: boolean }>(`${API_BASE}/news/generate-article`, payload || {});
+  },
+
+  /**
+   * Đăng trực tiếp bài viết / bản tin lên Kênh Telegram @dbgtradingfx.
+   */
+  async publishNewsArticle(content: string): Promise<{ ok: boolean; message: string }> {
+    return postJson<{ ok: boolean; message: string }>(`${API_BASE}/news/publish`, {
+      content,
+    });
+  },
+
+  /**
+   * Đọc cấu hình OpenAI API và cài đặt tự động đăng bài.
+   */
+  async getAINewsSettings(): Promise<any> {
+    return fetchJson<any>(`${API_BASE}/news/ai-settings`);
+  },
+
+  /**
+   * Cập nhật OpenAI API Key và các tùy chọn tự động.
+   */
+  async updateAINewsSettings(payload: { openai_api_key?: string; openai_model?: string; auto_post_enabled?: boolean }): Promise<any> {
+    return postJson<any>(`${API_BASE}/news/ai-settings`, payload);
+  },
+};
+

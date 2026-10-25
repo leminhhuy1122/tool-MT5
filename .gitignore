@@ -1,0 +1,61 @@
+# ========================================
+# VietKey Gold AI — .gitignore
+# ========================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Environment variables (QUAN TRỌNG: không commit secrets)
+.env
+.env*.local
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Logs
+logs/
+*.log
+
+# Database & Scratch
+*.db
+*.sqlite3
+data/*.db
+scratch/
+
+# Jupyter & MyPy
+.ipynb_checkpoints/
+.mypy_cache/
