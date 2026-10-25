@@ -177,6 +177,25 @@ export const EconomicCalendarView: React.FC<EconomicCalendarViewProps> = ({ data
     }
   };
 
+  // Handler: Tự động tạo bài báo TIN NÓNG THỜI GIAN THỰC (Mẫu 3 - 2-3 phút sau tin)
+  const handleGenerateFlashNews = async () => {
+    setIsGenerating(true);
+    setActionFeedback(null);
+    try {
+      const res = await api.dispatchFlashNews({ use_ai: true, publish_now: false });
+      setGeneratedContent(res.content);
+      setContentSource(res.has_openai ? 'openai' : 'local_nlp');
+      setActionFeedback({
+        type: 'success',
+        message: `Đã tạo Tin Nóng Thời Gian Thực cho sự kiện "${res.eventTitle}" (${res.minutesAgo} phút trước)! Bấm "Xuất Bản Lên Kênh Telegram" để gửi.`,
+      });
+    } catch (err: any) {
+      setActionFeedback({ type: 'error', message: err.message || 'Lỗi khi tạo tin nóng thời gian thực.' });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   // Handler: Đăng nội dung hiện tại lên Telegram
   const handlePublishCurrent = async () => {
     if (!generatedContent.trim()) {
@@ -444,6 +463,56 @@ export const EconomicCalendarView: React.FC<EconomicCalendarViewProps> = ({ data
               >
                 <Sparkles size={15} />
                 {isGenerating ? 'Đang biên tập...' : '✨ Tạo Bài Báo Điểm Tin Vàng (Chuẩn Mẫu 2)'}
+              </button>
+            </div>
+
+            {/* Card Template 3: Real-Time Flash News Alert (2-3 phút sau tin) */}
+            <div
+              className="card"
+              style={{
+                border: '1px solid rgba(239, 68, 68, 0.4)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                gap: '12px',
+                background: 'linear-gradient(180deg, rgba(239, 68, 68, 0.05) 0%, rgba(15, 23, 42, 0.6) 100%)',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Zap size={16} className="text-sell" /> Mẫu 3: ⚡ Tin Nóng Thời Gian Thực
+                  </span>
+                  <span className="status-pill connected" style={{ fontSize: '10px', backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#F87171' }}>
+                    2-3 PHÚT SAU TIN
+                  </span>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Tự động phát hiện tin tức kinh tế vừa công bố, đối chiếu số liệu (Thực tế vs Dự báo vs Kỳ trước), đo phản ứng nến Vàng MT5 tức thì và đưa ra nhận định vĩ mô dặn dò ACE không fomo.
+                </p>
+                <div style={{ marginTop: '10px', fontSize: '11px', color: '#FCD34D', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <ShieldAlert size={14} />
+                  <span>Bot cũng tự động bắt tin và bắn lên Telegram 24/5 trong vòng 2-3 phút sau giờ tin ra!</span>
+                </div>
+              </div>
+
+              <button
+                className="btn btn-secondary"
+                onClick={handleGenerateFlashNews}
+                disabled={isGenerating}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  padding: '10px 16px',
+                  fontWeight: 700,
+                  border: '1px solid rgba(239, 68, 68, 0.5)',
+                  color: '#F87171',
+                }}
+              >
+                <Zap size={15} />
+                {isGenerating ? 'Đang phân tích tin...' : '⚡ Tạo Tin Nóng Vừa Ra (Mẫu 3)'}
               </button>
             </div>
           </div>

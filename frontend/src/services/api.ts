@@ -183,5 +183,12 @@ export const api = {
   async updateAINewsSettings(payload: { openai_api_key?: string; openai_model?: string; auto_post_enabled?: boolean }): Promise<any> {
     return postJson<any>(`${API_BASE}/news/ai-settings`, payload);
   },
+
+  /**
+   * Biên tập và phát tin nhanh thời gian thực (sau khi tin ra 2-3 phút) lên Telegram.
+   */
+  async dispatchFlashNews(payload?: { event_id?: string; use_ai?: boolean; publish_now?: boolean }): Promise<{ ok: boolean; eventTitle: string; minutesAgo: number; published: boolean; content: string; has_openai: boolean }> {
+    return postJson<any>(`${API_BASE}/news/dispatch-flash`, payload || { use_ai: true, publish_now: true });
+  },
 };
 

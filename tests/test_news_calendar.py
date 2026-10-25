@@ -120,3 +120,51 @@ def test_news_manager_fetch_calendar_mock(mock_urlopen):
     assert len(events) == 2
     assert events[0].country in ("USD", "EUR")
     assert any(e.title == "CPI m/m" for e in events)
+
+
+def test_news_manager_get_recently_released_events():
+    """Kiểm tra tìm kiếm sự kiện vừa ra cách đây 2-3 phút."""
+    manager = NewsManager()
+    now = datetime(2026, 10, 26, 12, 33, tzinfo=timezone.utc)
+
+    # Sự kiện ra cách đây 2.5 phút (lúc 12:30:30)
+    event_recent = EconomicEvent(
+        id="usd_flash",
+        title="Core CPI m/m",
+        country="USD",
+        impact=NewsImpact.HIGH,
+        time_utc=now - timedelta(minutes=2.5),
+    )
+
+    # Sự kiện ra cách đây 15 phút (đã cũ)
+    event_old = EconomicEvent(
+        id="usd_old",
+        title="Old Event",
+        country="USD",
+        impact=NewsImpact.HIGH,
+        time_utc=now - timedelta(minutes=15),
+    )
+
+    # Sự kiện sắp diễn ra trong tương lai
+    event_future = EconomicEvent(
+        id="usd_future",
+        title="Future Event",
+        country="USD",
+        impact=NewsImpact.HIGH,
+        time_utc=now + timedelta(minutes=10),
+    )
+
+    manager._cached_events = [event_recent, event_old, event_future]
+    manager._last_fetched_at = now
+
+    recently_released = manager.get_recently_released_events(
+        current_time=now,
+        window_min_start=1.0,
+        window_min_end=5.0,
+    )
+
+    assert len(recently_released) == 1
+    ev, mins_ago = recently_released[0]
+    assert ev.id == "usd_flash"
+    assert mins_ago == pytest.approx(2.5, rel=1e-1)
+

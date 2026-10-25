@@ -33,6 +33,7 @@ from app.ml.filter import MLSignalFilter
 from app.ml.model import SignalQualityClassifier
 from app.ml.registry import ModelRegistry
 from app.mt5.connector import MT5Connector
+from app.news.ai_writer import AINewsWriter
 from app.news.calendar import NewsManager
 from app.strategy.signal_engine import SignalEngine
 from app.strategy.signal_models import SignalDirection, SignalStatus, TradingSignal
@@ -70,6 +71,8 @@ class LiveBotRunner:
 
         # 3. Quản lý Lịch Kinh Tế & Tin Tức Tài Chính
         self.news_mgr = news_manager or NewsManager()
+        self.ai_news_writer = AINewsWriter(self.settings.openai)
+        self._notified_realtime_news_ids: set[str] = set()
 
         # 3. Động cơ phân tích & Tín hiệu
         self.signal_engine = SignalEngine(
@@ -164,6 +167,12 @@ class LiveBotRunner:
                 # Gửi thông báo cập nhật qua Telegram
                 self.notifier.notify_status_update(sig, current_price)
 
+            # 2b. Tự động kiểm tra và phát bài viết Tin Nóng sau khi tin ra 2-3 phút
+            try:
+                self.check_realtime_news_releases(current_price=current_price, now_utc=now_utc)
+            except Exception as e:
+                log.debug("Lỗi kiểm tra tin tức thời gian thực: %s", e)
+
             # 3. Thu thập nến M5 và kiểm tra nến mới
             df_m5 = self.data_mgr.get_candles(Timeframe.M5, num_bars=100)
             if df_m5 is None or len(df_m5) < 30:
@@ -237,6 +246,54 @@ class LiveBotRunner:
         except Exception as e:
             log.error("Lỗi trong chu kỳ LiveBotRunner: %s", e, exc_info=True)
             return None
+
+    def check_realtime_news_releases(
+        self,
+        current_price: float,
+        now_utc: Optional[datetime] = None,
+    ) -> Optional[str]:
+        """
+        Kiểm tra và tự động phát bài viết lên Telegram trong vòng 1-5 phút (chuẩn 2-3 phút) sau khi tin tức ra:
+        - Bắt các sự kiện tin Đỏ và Cam (USD / High & Medium impact).
+        - Đối chiếu số liệu và đo lường phản ứng giá Vàng thời gian thực.
+        - Bắn bài viết vào Telegram, đảm bảo không bắn trùng lặp.
+        """
+        if now_utc is None:
+            now_utc = datetime.now(timezone.utc)
+
+        recent_events = self.news_mgr.get_recently_released_events(
+            current_time=now_utc,
+            window_min_start=1.0,
+            window_min_end=5.0,
+            only_high_or_medium=True,
+        )
+
+        for ev, mins_ago in recent_events:
+            # Ưu tiên các tin liên quan trực tiếp đến đồng USD hoặc tin cực mạnh
+            if not ev.is_usd and not ev.is_high_impact:
+                continue
+
+            if ev.id not in self._notified_realtime_news_ids:
+                self._notified_realtime_news_ids.add(ev.id)
+                log.info(
+                    "⚡ PHÁT HIỆN TIN KINH TẾ VỪA CÔNG BỐ: [%s] cách đây %.1f phút! Đang biên tập bài viết...",
+                    ev.title, mins_ago,
+                )
+
+                post_text = self.ai_news_writer.generate_realtime_flash_news_post(
+                    event=ev,
+                    current_price=current_price,
+                    price_before=self.last_price or current_price,
+                    minutes_ago=int(round(mins_ago)),
+                )
+
+                if self.notifier and self.notifier.is_enabled:
+                    self.notifier.send_raw_message(post_text)
+                    log.info("✓ ĐÃ BẮN BÀI VIẾT TIN NÓNG THỜI GIAN THỰC LÊN TELEGRAM: [%s]", ev.title)
+
+                return post_text
+
+        return None
 
     def run_forever(self, poll_interval_sec: float = 5.0) -> None:
         """

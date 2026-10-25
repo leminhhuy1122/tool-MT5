@@ -91,3 +91,38 @@ def test_generate_gold_market_article_local():
     assert "3.994,9 USD/ounce" in article
     assert "0,71%" in article or "0.71%" in article
     assert "LỜI CẢNH BÁO" in article
+
+
+def test_generate_realtime_flash_news_post_local():
+    """Kiểm tra tạo bài viết TIN NÓNG THỜI GIAN THỰC (Flash News) sau khi tin ra 2-3 phút."""
+    writer = AINewsWriter()
+
+    event = EconomicEvent(
+        id="usd_cpi_flash",
+        title="Core CPI m/m",
+        country="USD",
+        impact=NewsImpact.HIGH,
+        time_utc=datetime(2026, 10, 26, 12, 30, tzinfo=timezone.utc),
+        forecast="0.3%",
+        previous="0.2%",
+        actual="0.4%",
+    )
+
+    post = writer.generate_realtime_flash_news_post(
+        event=event,
+        current_price=2040.5,
+        price_before=2052.0,
+        minutes_ago=2,
+        use_ai=False,
+    )
+
+    assert "TIN NÓNG THỜI GIAN THỰC" in post
+    assert "Vừa phát hành cách đây 2 phút" in post
+    assert "Chỉ số CPI lõi" in post or "Core CPI" in post
+    assert "0.4%" in post
+    assert "0.3%" in post
+    assert "DIỄN BIẾN GIÁ VÀNG" in post
+    assert "-11.5 giá" in post
+    assert "GIẢM MẠNH" in post
+    assert "LỜI CẢNH BÁO" in post
+

@@ -217,3 +217,39 @@ class NewsManager:
                 return ev, round(mins, 1)
 
         return None
+
+    def get_recently_released_events(
+        self,
+        current_time: Optional[datetime] = None,
+        window_min_start: float = 1.0,
+        window_min_end: float = 5.0,
+        only_high_or_medium: bool = True,
+    ) -> List[Tuple[EconomicEvent, float]]:
+        """
+        Lấy các sự kiện kinh tế vừa công bố trong khoảng thời gian cửa sổ (mặc định 1 - 5 phút, chuẩn 2-3 phút).
+
+        Args:
+            current_time: Thời điểm hiện tại (UTC).
+            window_min_start: Số phút tối thiểu sau khi tin ra (mặc định 1.0 phút).
+            window_min_end: Số phút tối đa sau khi tin ra (mặc định 5.0 phút).
+            only_high_or_medium: Chỉ lấy tin đỏ hoặc tin cam.
+
+        Returns:
+            Danh sách Tuple (event, minutes_ago).
+        """
+        events = self.fetch_calendar()
+        now = current_time or datetime.now(timezone.utc)
+        results: List[Tuple[EconomicEvent, float]] = []
+
+        for ev in events:
+            if only_high_or_medium and ev.impact not in (NewsImpact.HIGH, NewsImpact.MEDIUM):
+                continue
+
+            diff_sec = (now - ev.time_utc).total_seconds()
+            diff_min = diff_sec / 60.0
+
+            if window_min_start <= diff_min <= window_min_end:
+                results.append((ev, round(diff_min, 1)))
+
+        return results
+

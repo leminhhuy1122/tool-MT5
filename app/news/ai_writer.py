@@ -394,7 +394,134 @@ class AINewsWriter:
         return "\n".join(lines)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # 3. KẾT NỐI OPENAI API (Gọi trực tiếp qua urllib, không cần thư viện bên ngoài)
+    # 3. BÀI VIẾT TIN NÓNG THỜI GIAN THỰC (FLASH NEWS SAU KHI TIN RA 2-3 PHÚT)
+    # ──────────────────────────────────────────────────────────────────────────
+    def generate_realtime_flash_news_post(
+        self,
+        event: EconomicEvent,
+        current_price: float = 0.0,
+        price_before: Optional[float] = None,
+        minutes_ago: int = 2,
+        use_ai: bool = True,
+    ) -> str:
+        """
+        Tự động tạo bài đăng TIN NÓNG THỜI GIAN THỰC trong vòng 2-3 phút sau khi tin ra:
+        - Nhận diện sự kiện (CPI, NFP, Lãi suất, Bán lẻ, Thất nghiệp, PMI...).
+        - Đối chiếu số liệu: Thực tế (Actual) vs Dự báo (Forecast) vs Kỳ trước (Previous).
+        - Phản ứng tức thì của giá Vàng (XAUUSD) trên MT5.
+        - Phân tích logic vĩ mô tác động lên USD & Vàng.
+        - Lời dặn dò ACE trader không fomo đu đỉnh/đáy.
+        - Cảnh báo rủi ro chuẩn quy định.
+        """
+        if use_ai and self.openai_config.is_configured:
+            ai_post = self._generate_flash_news_with_openai(
+                event=event,
+                current_price=current_price,
+                price_before=price_before,
+                minutes_ago=minutes_ago,
+            )
+            if ai_post:
+                return ai_post
+
+        return self._generate_flash_news_local(
+            event=event,
+            current_price=current_price,
+            price_before=price_before,
+            minutes_ago=minutes_ago,
+        )
+
+    def _generate_flash_news_local(
+        self,
+        event: EconomicEvent,
+        current_price: float,
+        price_before: Optional[float] = None,
+        minutes_ago: int = 2,
+    ) -> str:
+        """Bộ sinh tin nóng cục bộ độc lập không cần API key."""
+        vn_time = _to_vn_datetime(event.time_utc)
+        time_str = vn_time.strftime("%H:%M %d/%m")
+        flag = COUNTRY_FLAGS.get(event.country.upper(), "🌐")
+        country_name = COUNTRY_NAMES_VN.get(event.country.upper(), event.country)
+
+        # Dịch tên sự kiện
+        title_lower = event.title.lower()
+        title_vn = event.title
+        for en, vn in FINANCIAL_TERMS_MAP.items():
+            if en in title_lower:
+                title_vn = vn
+                break
+
+        # Đánh giá phản ứng giá Vàng
+        if price_before and price_before > 0 and current_price > 0:
+            diff = current_price - price_before
+            if abs(diff) >= 0.3:
+                direction_str = "TĂNG VỌT" if diff > 0 else "GIẢM MẠNH"
+                reaction_line = f"• Phản ứng nến tức thì: <b>{diff:+.1f} giá</b> ({direction_str})\n• Vùng giá: từ <code>{price_before:.1f}</code> → <code>{current_price:.1f}</code> USD/oz"
+            else:
+                reaction_line = f"• Phản ứng nến tức thì: <b>Giằng co nhẹ ({diff:+.1f} giá)</b> quanh <code>{current_price:.1f}</code> USD/oz"
+        elif current_price > 0:
+            reaction_line = f"• Giá Vàng hiện tại: <code>{current_price:.1f}</code> USD/oz (Đang biến động mạnh theo tin)"
+        else:
+            reaction_line = "• Giá Vàng: Thị trường đang rung lắc dữ dội quanh vùng cản."
+
+        # Phân tích logic vĩ mô theo từng sự kiện
+        if any(k in title_lower for k in ["cpi", "inflation", "ppi"]):
+            macro_bias = (
+                "Chỉ số lạm phát tác động trực tiếp lên kỳ vọng lãi suất của Fed. "
+                "Nếu lạm phát cao hơn dự kiến, đồng USD sẽ tăng giá đè nặng lên Vàng; "
+                "ngược lại nếu lạm phát hạ nhiệt, Vàng sẽ có lực đẩy bứt phá rất mạnh."
+            )
+        elif any(k in title_lower for k in ["non-farm", "nfp", "unemployment", "jobless"]):
+            macro_bias = (
+                "Dữ liệu việc làm và thất nghiệp phản ánh sức khỏe nền kinh tế Mỹ. "
+                "Thị trường lao động mạnh mẽ hỗ trợ đồng USD và gây áp lực giảm lên Vàng, "
+                "trong khi tỷ lệ thất nghiệp gia tăng sẽ là bệ phóng cho đà tăng của Vàng."
+            )
+        elif any(k in title_lower for k in ["fomc", "funds rate", "fed chair", "rate decision"]):
+            macro_bias = (
+                "Quyết định lãi suất của Fed là sự kiện tối thượng chi phối dòng tiền toàn cầu. "
+                "Biên độ thị trường dự kiến quét 2 đầu từ 15-30 giá trước khi định hình xu hướng rõ nét."
+            )
+        elif any(k in title_lower for k in ["retail sales"]):
+            macro_bias = (
+                "Doanh số bán lẻ đo lường sức mua của người tiêu dùng Mỹ. "
+                "Sức mua mạnh mẽ củng cố sức mạnh đồng USD, kiềm chế đà tăng của kim loại quý."
+            )
+        else:
+            macro_bias = (
+                "Số liệu kinh tế vừa công bố đang được thị trường hấp thụ mạnh mẽ. "
+                "Dòng tiền lớn đang cơ cấu lại các vị thế ngắn hạn trên các cặp tiền và Vàng."
+            )
+
+        impact_badge = "🔥 TIN ĐỎ CỰC MẠNH (HIGH IMPACT)" if event.impact == NewsImpact.HIGH else "⚡ TIN CAM QUAN TRỌNG (MEDIUM IMPACT)"
+
+        forecast_val = event.forecast if event.forecast else "Chưa có"
+        previous_val = event.previous if event.previous else "Chưa có"
+        actual_val = event.actual if event.actual else "Vừa ra tin"
+
+        lines = [
+            "⚡️ 🔴 <b>TIN NÓNG THỜI GIAN THỰC — KẾT QUẢ VỪA CÔNG BỐ!</b>",
+            f"⏱ <i>Vừa phát hành cách đây {minutes_ago} phút ({time_str} VN)</i>",
+            f"{flag} <b>Quốc gia:</b> {country_name} ({event.country}) | {impact_badge}",
+            "",
+            f"📌 <b>SỰ KIỆN:</b> <b>{title_vn}</b> (<code>{event.title}</code>)",
+            f"📊 <b>Thực tế (Actual):</b> <code>{actual_val}</code>",
+            f"📈 <b>Dự báo (Forecast):</b> <code>{forecast_val}</code> | <b>Kỳ trước:</b> <code>{previous_val}</code>",
+            "",
+            "🥇 <b>DIỄN BIẾN GIÁ VÀNG (XAUUSD):</b>",
+            reaction_line,
+            "",
+            "💡 <b>NHẬN ĐỊNH VĨ MÔ & CHIẾN LƯỢC:</b>",
+            f"• {macro_bias}",
+            "• <b>Lời dặn ACE Trader:</b> <i>Sau khi tin ra 2-3 phút, thị trường thường xuất hiện các pha quét râu hai đầu (Liquidity Sweeps) và giãn spread. Tuyệt đối không fomo đuổi lệnh! Hãy chờ nến M5 đóng cửa ổn định cấu trúc rồi canh đánh theo dòng tiền lớn!</i>",
+            "",
+            "⚠️ <b>LỜI CẢNH BÁO:</b> <i>Đây chỉ là thông tin tham khảo dựa trên phân tích dữ liệu thời gian thực, không cam kết đúng 100%. Quý nhà đầu tư luôn tuân thủ quản trị rủi ro và cài đặt SL!</i>",
+            f"⏰ <i>{time_str} (VN) | VietKey Real-Time Newsroom</i>",
+        ]
+        return "\n".join(lines)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # 4. KẾT NỐI OPENAI API (Gọi trực tiếp qua urllib, không cần thư viện bên ngoài)
     # ──────────────────────────────────────────────────────────────────────────
     def _call_openai(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> Optional[str]:
         """Gửi request tới OpenAI API endpoint https://api.openai.com/v1/chat/completions."""
@@ -495,3 +622,37 @@ class AINewsWriter:
         )
 
         return self._call_openai(system_prompt, user_prompt, temperature=0.6)
+
+    def _generate_flash_news_with_openai(
+        self,
+        event: EconomicEvent,
+        current_price: float,
+        price_before: Optional[float] = None,
+        minutes_ago: int = 2,
+    ) -> Optional[str]:
+        """Dùng OpenAI để tạo bài viết tin nóng thời gian thực chuẩn phong cách chuyên gia tài chính."""
+        system_prompt = (
+            "Bạn là biên tập viên tin tức tài chính nhanh (Breaking News / Flash Alert) của kênh Telegram VietKey Gold AI.\n"
+            "Hãy viết một bản tin TIN NÓNG THỜI GIAN THỰC thông báo sự kiện kinh tế vừa công bố cách đây 2-3 phút.\n"
+            "Bản tin phải thật khẩn cấp, chuyên nghiệp, hấp dẫn, dễ đọc trên điện thoại và có cấu trúc rõ ràng:\n"
+            "1. Tiêu đề: ⚡️ 🔴 TIN NÓNG THỜI GIAN THỰC — KẾT QUẢ VỪA CÔNG BỐ!\n"
+            "2. Giờ công bố (giờ VN) và mức độ quan trọng (Tin đỏ / Tin cam).\n"
+            "3. Tên sự kiện (dịch tiếng Việt) và số liệu: Thực tế, Dự báo, Kỳ trước.\n"
+            "4. Phản ứng tức thì của giá Vàng (XAUUSD).\n"
+            "5. Phân tích tác động vĩ mô ngắn hạn lên đồng USD và Vàng.\n"
+            "6. Lời dặn ACE Trader không fomo đu đỉnh/đáy trong 5-15 phút đầu.\n"
+            "7. LỜI CẢNH BÁO BẮT BUỘC: ⚠️ LỜI CẢNH BÁO: Đây chỉ là thông tin tham khảo dựa trên phân tích dữ liệu thời gian thực, không cam kết đúng 100%. Quý nhà đầu tư luôn tuân thủ quản trị rủi ro!\n\n"
+            "Chỉ trả về nội dung bài viết, không thêm lời chào ngoài lề."
+        )
+
+        user_prompt = (
+            f"Thông tin sự kiện vừa ra:\n"
+            f"- Sự kiện: {event.title} ({event.country})\n"
+            f"- Mức độ: {event.impact.value}\n"
+            f"- Thời gian: Vừa phát hành cách đây {minutes_ago} phút\n"
+            f"- Dự báo: {event.forecast or 'N/A'}, Kỳ trước: {event.previous or 'N/A'}, Thực tế: {event.actual or 'Vừa ra tin'}\n"
+            f"- Giá Vàng hiện tại: {current_price:.1f} USD/oz (Giá trước tin: {price_before or 'N/A'})"
+        )
+
+        return self._call_openai(system_prompt, user_prompt, temperature=0.6)
+

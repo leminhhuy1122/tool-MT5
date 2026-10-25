@@ -684,6 +684,12 @@ class UpdateAISettingsRequest(BaseModel):
     auto_post_enabled: Optional[bool] = None
 
 
+class DispatchFlashNewsRequest(BaseModel):
+    event_id: Optional[str] = None
+    use_ai: bool = True
+    publish_now: bool = True
+
+
 @app.post("/api/v1/news/generate-digest")
 def generate_calendar_digest(req: GenerateDigestRequest):
     """
@@ -764,6 +770,70 @@ def publish_news_article(req: PublishArticleRequest):
         raise HTTPException(status_code=502, detail="Gửi bài viết lên Telegram thất bại (kiểm tra token/kênh).")
 
     return {"ok": True, "message": "Đã xuất bản bài viết lên Kênh Telegram @dbgtradingfx thành công!"}
+
+
+@app.post("/api/v1/news/dispatch-flash")
+def dispatch_flash_news(req: DispatchFlashNewsRequest):
+    """
+    Biên tập và phát tin nhanh thời gian thực (sau khi tin ra 2-3 phút) lên Telegram.
+    Nếu không truyền event_id, tự động lấy tin tức quan trọng gần nhất vừa diễn ra.
+    """
+    try:
+        events = news_manager.fetch_calendar(force=False)
+        target_event = None
+        now_utc = datetime.now(timezone.utc)
+
+        if req.event_id:
+            for ev in events:
+                if ev.id == req.event_id:
+                    target_event = ev
+                    break
+        else:
+            # Lấy sự kiện USD / High / Medium gần nhất vừa diễn ra (hoặc sự kiện đầu tiên)
+            past_events = [e for e in events if e.time_utc <= now_utc and (e.is_usd or e.is_high_impact)]
+            if past_events:
+                target_event = past_events[-1]
+            elif events:
+                target_event = events[0]
+
+        if not target_event:
+            raise HTTPException(status_code=404, detail="Không tìm thấy sự kiện kinh tế phù hợp để phát tin nhanh.")
+
+        price = 3996.34
+        if connector and connector.is_connected:
+            mgr = MarketDataManager(settings.mt5.symbol)
+            price_info = mgr.get_latest_price()
+            if price_info:
+                price = price_info.get("bid", 3996.34)
+
+        diff_min = max(1.0, (now_utc - target_event.time_utc).total_seconds() / 60.0)
+        minutes_ago = int(round(diff_min)) if diff_min < 120 else 2
+
+        content = ai_writer.generate_realtime_flash_news_post(
+            event=target_event,
+            current_price=price,
+            minutes_ago=minutes_ago,
+            use_ai=req.use_ai,
+        )
+
+        published = False
+        if req.publish_now and notifier.is_enabled:
+            published = notifier.send_raw_message(content)
+
+        return {
+            "ok": True,
+            "eventId": target_event.id,
+            "eventTitle": target_event.title,
+            "minutesAgo": minutes_ago,
+            "published": published,
+            "content": content,
+            "has_openai": ai_writer.openai_config.is_configured,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Lỗi phát tin nhanh: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/v1/news/ai-settings")
