@@ -53,6 +53,15 @@ class SignalTracker:
         """Các tín hiệu đang ACTIVE hoặc ENTRY_REACHED."""
         return [s for s in self._signals.values() if s.is_active]
 
+    def load_active_signals(self, signals: list[TradingSignal]) -> None:
+        """Nạp các tín hiệu active từ cơ sở dữ liệu để tiếp tục quản lý và chống trùng lặp qua các lần khởi động lại."""
+        count = 0
+        for sig in signals:
+            if sig.is_active:
+                self._signals[sig.signal_id] = sig
+                count += 1
+        log.info("SignalTracker đã khôi phục %d tín hiệu active từ bộ nhớ lưu trữ.", count)
+
     def is_duplicate(
         self,
         symbol: str,

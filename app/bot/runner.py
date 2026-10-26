@@ -87,8 +87,15 @@ class LiveBotRunner:
         classifier = SignalQualityClassifier.load(latest_model_path) if latest_model_path else None
         self.ml_filter = MLSignalFilter(classifier=classifier)
 
-        # 5. Bộ theo dõi tín hiệu
+        # 5. Bộ theo dõi tín hiệu (Khôi phục trạng thái active từ SQLite để chống trùng lặp khi khởi động lại)
         self.tracker = SignalTracker(config=TrackerConfig(cooldown_minutes=45, max_active_signals=3))
+        try:
+            active_rows = self.signal_repo.get_active_signals(self.symbol)
+            if active_rows:
+                active_signals = [TradingSignal.from_dict(row) for row in active_rows]
+                self.tracker.load_active_signals(active_signals)
+        except Exception as e:
+            log.warning("Không thể nạp tín hiệu active từ database: %s", e)
 
         # 6. Telegram Notifier
         self.notifier = notifier or TelegramNotifier(self.settings.telegram)
@@ -230,6 +237,16 @@ class LiveBotRunner:
                 log.info("🔥 PHÁT HIỆN TÍN HIỆU: %s %s @ %.2f (Score: %.1f)",
                          final_signal.direction.value, self.symbol,
                          final_signal.entry_price, final_signal.score)
+
+                # Chống trùng lặp 2 lớp: Kiểm tra trực tiếp cả ở Database SQLite
+                active_in_db = self.signal_repo.get_active_signals(self.symbol)
+                for s in active_in_db:
+                    if s.get("direction") == final_signal.direction.value:
+                        log.warning(
+                            "⛔ CHẶN TRÙNG LẶP: Đã có lệnh %s [%s] đang %s trong database. Bỏ qua phát thêm để tránh rủi ro chồng lệnh (Double Exposure).",
+                            final_signal.direction.value, s.get("signal_id"), s.get("status")
+                        )
+                        return None
 
                 # Đăng ký vào SignalTracker
                 is_reg = self.tracker.register_signal(final_signal)

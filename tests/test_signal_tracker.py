@@ -180,3 +180,24 @@ class TestSignalTracker:
         assert len(tracker.all_signals) == 1
         tracker.clear()
         assert len(tracker.all_signals) == 0
+
+    def test_load_active_signals_restoration(self):
+        """Khôi phục các tín hiệu active từ nguồn bên ngoài (DB) và chặn trùng lặp."""
+        tracker = SignalTracker()
+        sig1 = _make_signal(direction=SignalDirection.SELL)
+        sig1.signal_id = "sig_active_1"
+        sig2 = _make_signal(direction=SignalDirection.BUY)
+        sig2.signal_id = "sig_done_2"
+        sig2.status = SignalStatus.TP_REACHED
+
+        # Nạp vào tracker
+        tracker.load_active_signals([sig1, sig2])
+
+        # Chỉ có tín hiệu active được nạp vào
+        assert len(tracker.active_signals) == 1
+        assert tracker.get_signal("sig_active_1") is not None
+        assert tracker.get_signal("sig_done_2") is None
+
+        # Kiểm tra chống trùng lặp nhận diện đúng tín hiệu đã khôi phục
+        assert tracker.is_duplicate("XAUUSD", SignalDirection.SELL) is True
+
