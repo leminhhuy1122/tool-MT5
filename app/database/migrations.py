@@ -9,7 +9,7 @@ Quản lý và thực thi các đợt migration cấu trúc database:
 """
 
 from app.database.connection import DatabaseManager
-from app.database.schema import INITIAL_SCHEMA_SQL
+from app.database.schema import INITIAL_SCHEMA_SQL, MIGRATION_V2_SQL
 from logger import get_logger
 
 log = get_logger("database.migrations")
@@ -17,6 +17,7 @@ log = get_logger("database.migrations")
 # Danh sách migrations tuần tự: version -> SQL
 MIGRATIONS = {
     1: INITIAL_SCHEMA_SQL,
+    2: MIGRATION_V2_SQL,
 }
 
 

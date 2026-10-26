@@ -1,10 +1,13 @@
-import React from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  Scale,
   TrendingDown,
   TrendingUp,
+  Trophy,
   X,
+  XCircle,
+  Zap,
 } from 'lucide-react';
 import type { SignalItem } from '../../types';
 
@@ -20,6 +23,10 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
   const isBuy = signal.direction === 'BUY';
   const isSell = signal.direction === 'SELL';
   const dirClass = isBuy ? 'buy' : isSell ? 'sell' : 'wait';
+
+  const isWin = Boolean(signal.isWin || signal.status === 'TP_REACHED' || (signal.pnlPoints && signal.pnlPoints > 0));
+  const isLoss = Boolean(signal.isLoss || signal.status === 'SL_REACHED' || (signal.pnlPoints && signal.pnlPoints < 0));
+  const isBreakeven = Boolean(signal.isBreakeven || (signal.pnlPoints === 0 && signal.exitPrice));
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -41,6 +48,156 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
 
         {/* Body */}
         <div className="modal-body">
+          {/* Win / Loss Outcome Highlight Banner */}
+          {isWin && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                border: '1px solid rgba(16, 185, 129, 0.35)',
+                marginBottom: '14px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Trophy size={20} color="#10b981" />
+                <div>
+                  <div style={{ fontWeight: 800, color: '#10b981', fontSize: '14px' }}>
+                    🏆 LỆNH THẮNG (WIN) • TAKE PROFIT THÀNH CÔNG
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    {signal.exitPrice ? `Thoát lệnh chốt lời tại giá $${signal.exitPrice.toFixed(2)}` : 'Đã đạt mục tiêu Take Profit'}
+                    {signal.durationSeconds ? ` • Thời gian giữ lệnh: ${Math.round(signal.durationSeconds / 60)} phút` : ''}
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div className="font-mono font-bold text-base" style={{ color: '#10b981' }}>
+                  {signal.pnlPoints ? `+${signal.pnlPoints.toFixed(1)} pts` : '+TP'}
+                </div>
+                {signal.pnlPips ? (
+                  <div className="font-mono text-xs text-buy">+{signal.pnlPips.toFixed(1)} pips</div>
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {isLoss && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                marginBottom: '14px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <XCircle size={20} color="#ef4444" />
+                <div>
+                  <div style={{ fontWeight: 800, color: '#ef4444', fontSize: '14px' }}>
+                    ❌ LỆNH THUA (LOST) • ĐÃ CHẠM STOP LOSS
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    {signal.exitPrice ? `Thoát lệnh cắt lỗ tại giá $${signal.exitPrice.toFixed(2)}` : 'Đã chạm mốc Stop Loss để bảo vệ vốn'}
+                    {signal.durationSeconds ? ` • Thời gian giữ lệnh: ${Math.round(signal.durationSeconds / 60)} phút` : ''}
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div className="font-mono font-bold text-base" style={{ color: '#ef4444' }}>
+                  {signal.pnlPoints ? `${signal.pnlPoints.toFixed(1)} pts` : '-SL'}
+                </div>
+                {signal.pnlPips ? (
+                  <div className="font-mono text-xs text-sell">{signal.pnlPips.toFixed(1)} pips</div>
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {isBreakeven && !isWin && !isLoss && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                marginBottom: '14px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Scale size={20} color="#f59e0b" />
+                <div>
+                  <div style={{ fontWeight: 800, color: '#f59e0b', fontSize: '14px' }}>
+                    ⚖️ HÒA VỐN (BREAKEVEN)
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    {signal.exitPrice ? `Thoát lệnh bảo toàn vốn tại giá $${signal.exitPrice.toFixed(2)}` : 'Lệnh đóng không phát sinh lỗ'}
+                  </div>
+                </div>
+              </div>
+              <div className="font-mono font-bold text-sm text-gold">0.0 pts</div>
+            </div>
+          )}
+
+          {(signal.isPredictive || signal.setupType === 'PREDICTIVE_LIMIT') && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(168, 85, 247, 0.12)',
+                border: '1px solid rgba(168, 85, 247, 0.35)',
+                marginBottom: '14px',
+              }}
+            >
+              <Zap size={20} color="#C084FC" />
+              <div>
+                <div style={{ fontWeight: 800, color: '#C084FC', fontSize: '13px' }}>
+                  🔮 KẾ HOẠCH DỰ ĐOÁN ĐÓN SÓNG TỪ XA ({signal.direction} LIMIT)
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  Hệ thống phân tích Order Block và cấu trúc cản chưa kiểm định từ xa. Cho phép Trader chủ động cài đặt Limit đón sóng trước!
+                </div>
+              </div>
+            </div>
+          )}
+
+          {signal.status === 'ENTRY_REACHED' && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '10px 14px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(56, 189, 248, 0.12)',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                marginBottom: '14px',
+              }}
+            >
+              <Zap size={18} color="#38bdf8" />
+              <div>
+                <div style={{ fontWeight: 700, color: '#38bdf8', fontSize: '13px' }}>
+                  ⚡ LỆNH ĐÃ KHỚP & ĐANG CHẠY THỰC TẾ (IN-TRADE)
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Hệ thống đang bám sát giá trực tiếp từ MT5 và quản trị rủi ro trailing stop theo thời gian thực.
+                </div>
+              </div>
+            </div>
+          )}
           {/* Status & Confluence Score Banner */}
           <div
             style={{

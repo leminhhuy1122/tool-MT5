@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { ErrorBoundary } from './components/layout/ErrorBoundary';
 import { Sidebar } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
 import { LatestSignals } from './components/overview/LatestSignals';
 import { LiveOpenPositions } from './components/overview/LiveOpenPositions';
-import { MarketOverview } from './components/overview/MarketOverview';
+import { MarketTickerHero } from './components/overview/MarketTickerHero';
+import { PaperWalletHeroCard } from './components/overview/PaperWalletHeroCard';
+import { PerformanceCharts } from './components/overview/PerformanceCharts';
 import { PerformanceSummary } from './components/overview/PerformanceSummary';
-import { StatusCards } from './components/overview/StatusCards';
-import { SystemMonitoringWidget } from './components/overview/SystemMonitoringWidget';
+import { SystemHealthFooter } from './components/overview/SystemHealthFooter';
 import { EconomicCalendarView } from './components/views/EconomicCalendarView';
 import { MarketAnalysisView } from './components/views/MarketAnalysisView';
+import { PaperWalletView } from './components/views/PaperWalletView';
 import { StrategySettingsView } from './components/views/StrategySettingsView';
 import { SystemMonitoringView } from './components/views/SystemMonitoringView';
 import { TelegramSettingsView } from './components/views/TelegramSettingsView';
@@ -33,7 +36,7 @@ export const App: React.FC = () => {
   const [pollIntervalSec, setPollIntervalSec] = useState<number>(5);
 
   // System sub-tab state when in 'system' view
-  const [systemSubTab, setSystemSubTab] = useState<'telegram' | 'monitoring' | 'market' | 'strategy' | 'performance'>('telegram');
+  const [systemSubTab, setSystemSubTab] = useState<'telegram' | 'monitoring' | 'market' | 'strategy' | 'performance'>('monitoring');
 
   // Real data state
   const [statusCards, setStatusCards] = useState<StatusCardData>({
@@ -145,9 +148,10 @@ export const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [loadData, pollIntervalSec]);
 
-  // Route identifier normalized to 4 core tabs
+  // Route identifier normalized to core tabs
   const isOverview = currentMenu === 'overview';
   const isSignals = currentMenu === 'signals' || currentMenu === 'live-signals' || currentMenu === 'signal-history';
+  const isPaperWallet = currentMenu === 'paper-wallet';
   const isNews = currentMenu === 'news' || currentMenu === 'economic-calendar';
   const isSystem =
     currentMenu === 'system' ||
@@ -187,9 +191,13 @@ export const App: React.FC = () => {
           onToggleDensity={() => setDensity(density === 'normal' ? 'compact' : 'normal')}
           pollIntervalSec={pollIntervalSec}
           onChangePollInterval={setPollIntervalSec}
+          currentMenu={currentMenu}
+          onSelectMenu={setCurrentMenu}
+          paperWallet={statusCards.paperWallet}
         />
 
         <main className="content-area">
+          <ErrorBoundary fallbackTitle="Đã xảy ra sự cố trong khu vực nội dung">
           {errorMsg && (
             <div
               style={{
@@ -241,31 +249,43 @@ export const App: React.FC = () => {
           {/* Tab 1: Tổng Quan (Overview) */}
           {isOverview && (
             <>
-              {/* Status Cards */}
-              <StatusCards data={statusCards} />
+              {/* 1. TOP HERO: Giá vàng MT5, Tích hợp AI Copilot & Xu hướng đa khung */}
+              <MarketTickerHero
+                statusCards={statusCards}
+                marketOverview={marketOverview}
+                onRefresh={() => loadData(true)}
+              />
 
-              {/* Market Overview */}
-              <div style={{ marginBottom: '20px' }}>
-                <MarketOverview data={marketOverview} />
-              </div>
+              {/* 2. VÍ ĐẦU TƯ ẢO (0.01 LOT): Hiển thị trực tiếp Lời/Lỗ tiền đô (U) gọn gàng */}
+              <PaperWalletHeroCard
+                paperWallet={statusCards.paperWallet}
+                currentPrice={statusCards.currentPrice || marketOverview.price}
+                onNavigateToWallet={setCurrentMenu}
+                onRefresh={() => loadData(false)}
+              />
 
-              {/* Vị Thế Đang Khớp Lệnh & PnL Thả Nổi Real-time (Pips & Giá) */}
+              {/* 2. TRỌNG TÂM #1: Vị Thế Đang Khớp Lệnh & PnL Thả Nổi Real-time (Pips & Giá) */}
               <LiveOpenPositions
                 signals={signals}
                 currentPrice={statusCards.currentPrice || marketOverview.price}
               />
 
-              {/* Signals and Telemetry Grid */}
-              <div className="grid-2col">
+              {/* 3. TRỌNG TÂM #2: Bảng Tín Hiệu Giao Dịch & Quản Lý Lệnh Win / Lost (Full-width bao quát) */}
+              <div style={{ marginBottom: '12px' }}>
                 <LatestSignals
                   signals={signals}
                   currentPrice={statusCards.currentPrice || marketOverview.price}
                 />
-                <div className="telemetry-stack">
-                  <PerformanceSummary data={performance} />
-                  <SystemMonitoringWidget data={systemMetrics} />
-                </div>
               </div>
+
+              {/* 4. BIỂU ĐỒ HIỆU SUẤT TRỰC QUAN: Đường cong PnL tích lũy & Vòng tròn Winrate */}
+              <PerformanceCharts
+                performance={performance}
+                signals={signals}
+              />
+
+              {/* 5. ĐÁY TRANG: Báo cáo thông số hệ thống & tài nguyên (Đưa xuống dưới cùng) */}
+              <SystemHealthFooter data={systemMetrics} />
             </>
           )}
 
@@ -299,6 +319,9 @@ export const App: React.FC = () => {
             </div>
           )}
 
+          {/* Tab: Ví Đầu Tư Ảo (Paper Trading 0.01 Lot) */}
+          {isPaperWallet && <PaperWalletView />}
+
           {/* Tab 3: Tin Tức & Dự Báo AI (Economic News & AI Bias) */}
           {isNews && <EconomicCalendarView data={newsData} />}
 
@@ -317,8 +340,8 @@ export const App: React.FC = () => {
                 }}
               >
                 {[
+                  { id: 'monitoring', label: '💻 Giám Sát & Tìm Lỗi' },
                   { id: 'telegram', label: '🔔 Quản Trị Telegram' },
-                  { id: 'monitoring', label: '💻 Giám Sát Tài Nguyên' },
                   { id: 'market', label: '📈 Phân Tích Cấu Trúc' },
                   { id: 'strategy', label: '⚙️ Cấu Hình Chiến Lược' },
                   { id: 'performance', label: '📊 Thống Kê Hiệu Suất' },
@@ -356,6 +379,7 @@ export const App: React.FC = () => {
               )}
             </div>
           )}
+          </ErrorBoundary>
         </main>
       </div>
     </div>

@@ -357,6 +357,23 @@ class MarketStructureResult:
                  if e.event_type in (StructureBreak.CHOCH_BULLISH, StructureBreak.CHOCH_BEARISH)]
         return choch[-1] if choch else None
 
+    @property
+    def last_break(self) -> Optional[StructureBreak]:
+        """Sự kiện phá vỡ cấu trúc gần nhất."""
+        return self.structure_events[-1].event_type if self.structure_events else None
+
+    @property
+    def strong_high(self) -> Optional[float]:
+        """Swing High cao nhất gần đây."""
+        highs = [s.price for s in self.swings if s.swing_type == SwingType.SWING_HIGH]
+        return max(highs) if highs else None
+
+    @property
+    def strong_low(self) -> Optional[float]:
+        """Swing Low thấp nhất gần đây."""
+        lows = [s.price for s in self.swings if s.swing_type == SwingType.SWING_LOW]
+        return min(lows) if lows else None
+
 
 def analyze_market_structure(
     df: pd.DataFrame,

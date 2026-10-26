@@ -17,6 +17,7 @@ Bộ điều phối toàn diện cho việc chạy tự động theo thời gian
 """
 
 from datetime import datetime, timezone
+import json
 import os
 import re
 import signal
@@ -30,15 +31,19 @@ from app.database.connection import DatabaseManager
 from app.database.repository import MarketDataRepository, SignalRepository
 from app.market.data_manager import MarketDataManager
 from app.market.timeframe_manager import Timeframe
+from app.ml.features import FeatureExtractor
 from app.ml.filter import MLSignalFilter
 from app.ml.model import SignalQualityClassifier
 from app.ml.registry import ModelRegistry
 from app.mt5.connector import MT5Connector
 from app.news.ai_writer import AINewsWriter
 from app.news.calendar import NewsManager
+from app.strategy.feedback_learner import SelfLearningFeedbackEngine, TradeOutcomeAnalyzer
 from app.strategy.signal_engine import SignalEngine
 from app.strategy.signal_models import SignalDirection, SignalStatus, TradingSignal
 from app.strategy.signal_tracker import SignalTracker, TrackerConfig
+from app.strategy.smart_exit import ExitActionType, SmartExitConfig, SmartExitEngine
+from app.simulator.paper_engine import PaperTradingEngine
 from app.telegram.notifier import TelegramNotifier
 from config import Settings, get_settings
 from logger import get_logger
@@ -75,18 +80,52 @@ class LiveBotRunner:
         self.ai_news_writer = AINewsWriter(self.settings.openai)
         self._notified_realtime_news_ids: set[str] = set()
 
+        # 4. Tích hợp Machine Learning Filter & Model Registry (Phase 7 & 10)
+        self.ml_registry = ModelRegistry(self.db)
+        if getattr(getattr(self.settings, "optimization", None), "enable_ml_filter", True):
+            classifier = self.ml_registry.get_active_production_model()
+            self.ml_filter = MLSignalFilter(classifier=classifier)
+        else:
+            log.info("Optimization: ML Signal Filter đã tắt theo cấu hình (Pure Rule-based SMC Mode).")
+            self.ml_filter = None
+
+        # 4b. Động cơ tự học từ closed trades (Phase 8 & 10)
+        if getattr(getattr(self.settings, "optimization", None), "enable_self_learning", True):
+            self.feedback_engine = SelfLearningFeedbackEngine(repository=self.signal_repo)
+            try:
+                self.feedback_engine.refresh()
+            except Exception as e:
+                log.debug("Khởi tạo feedback engine: %s", e)
+        else:
+            log.info("Optimization: Feedback Learning Engine đã tắt theo cấu hình.")
+            self.feedback_engine = None
+
+        # 4c. Process Singleton Guard (Phase 10)
+        self.singleton_guard = None
+        if getattr(getattr(self.settings, "optimization", None), "enable_process_singleton", True):
+            from app.system.resource_optimizer import ProcessSingletonGuard
+            self.singleton_guard = ProcessSingletonGuard()
+
+        # 4d. Smart Exit & Adaptive Profit Protection Engine (Phase 12)
+        exit_cfg = getattr(self.settings, "smart_exit", None)
+        self.smart_exit = SmartExitEngine(config=exit_cfg)
+
+        # 4e. Cấu hình Hedging Chiến Lược (Strategic Zone Hedging)
+        from config import HedgingConfig
+        self.hedging_cfg = getattr(self.settings, "hedging", None) or HedgingConfig()
+
+        # 4f. AI Trading Copilot Companion (Đồng hành đàm đạo thời gian thực)
+        from app.strategy.ai_companion import AITradingCopilot
+        self.ai_copilot = AITradingCopilot()
+
         # 3. Động cơ phân tích & Tín hiệu
         self.signal_engine = SignalEngine(
             strategy_version="v1.0-M5",
             symbol=self.symbol,
             default_timeframe="M5",
+            ml_filter=self.ml_filter,
+            feedback_engine=self.feedback_engine,
         )
-
-        # 4. Tích hợp Machine Learning Filter (Phase 9)
-        self.ml_registry = ModelRegistry(self.db)
-        latest_model_path = self.ml_registry.get_latest_production_model_path()
-        classifier = SignalQualityClassifier.load(latest_model_path) if latest_model_path else None
-        self.ml_filter = MLSignalFilter(classifier=classifier)
 
         # 5. Bộ theo dõi tín hiệu (Khôi phục trạng thái active từ SQLite để chống trùng lặp khi khởi động lại)
         self.tracker = SignalTracker(config=TrackerConfig(cooldown_minutes=45, max_active_signals=3))
@@ -101,9 +140,19 @@ class LiveBotRunner:
         # 6. Telegram Notifier
         self.notifier = notifier or TelegramNotifier(self.settings.telegram)
 
-        # Trạng thái vòng lặp
+        # 7. Ví Đầu Tư Ảo & Paper Trading Engine
+        self.paper_engine = PaperTradingEngine(
+            db_manager=self.db,
+            notifier=self.notifier,
+            smart_exit_engine=self.smart_exit,
+        )
+
+        # Trạng thái vòng lặp và tự phục hồi
         self.last_processed_m5_time: Optional[datetime] = None
         self.last_price: float = 0.0
+        self._disconnect_count: int = 0
+        self._last_reconnect_attempt: float = 0.0
+        self._last_cleanup_time: float = 0.0
 
     def start(self) -> None:
         """Khởi động bot và kết nối các dịch vụ."""
@@ -113,11 +162,19 @@ class LiveBotRunner:
         log.info("  Chế độ: FORWARD TESTING / SIGNALS ONLY (KHÔNG AUTO-ORDER)")
         log.info("=" * 60)
 
+        # Kiểm tra Process Singleton Guard chống trùng lặp instance (Phase 10)
+        if self.singleton_guard:
+            if not self.singleton_guard.acquire():
+                log.error("Không thể khởi động: Đã có instance bot khác đang chạy trên hệ thống.")
+                return
+
         # Kết nối MT5
         if not self.connector.is_connected:
             res = self.connector.connect()
             if not res.success:
                 log.error("Không thể kết nối MT5 Terminal: %s", res.error)
+                if self.singleton_guard:
+                    self.singleton_guard.release()
                 return
 
         # Kiểm tra kết nối Telegram
@@ -132,6 +189,8 @@ class LiveBotRunner:
         self.is_running = False
         if self.connector.is_connected:
             self.connector.disconnect()
+        if self.singleton_guard:
+            self.singleton_guard.release()
         log.info("✓ Bot đã dừng an toàn.")
 
     def run_once(self) -> Optional[TradingSignal]:
@@ -142,10 +201,39 @@ class LiveBotRunner:
         3. Gửi thông báo và lưu trữ database.
         """
         try:
-            # 1. Lấy giá mới nhất từ MT5
+            # 1. Lấy giá mới nhất từ MT5 (kèm cơ chế Auto-Reconnect)
             price_info = self.data_mgr.get_latest_price()
             if not price_info:
-                return None
+                now_ts = time.time()
+                if not self.connector.is_connected and (now_ts - self._last_reconnect_attempt > 10.0):
+                    self._last_reconnect_attempt = now_ts
+                    self._disconnect_count += 1
+                    log.warning(
+                        "⚠️ Phát hiện mất kết nối MT5 (lần %d). Đang thử tự động kết nối lại...",
+                        self._disconnect_count,
+                    )
+                    res = self.connector.connect()
+                    if res.success:
+                        log.info("✓ Tự động kết nối lại MT5 thành công!")
+                        self._disconnect_count = 0
+                        price_info = self.data_mgr.get_latest_price()
+                    else:
+                        log.error("❌ Tự động kết nối lại MT5 thất bại: %s", res.message)
+                        if self._disconnect_count == 3 and self.notifier.is_enabled:
+                            self.notifier.send_system_event(
+                                event_type="DISCONNECT",
+                                message="⚠️ CẢNH BÁO HỆ THỐNG: Mất kết nối MT5 Terminal liên tiếp 3 lần. Bot tạm dừng phân tích!",
+                            )
+                if not price_info:
+                    return None
+
+            # Reset bộ đếm khi đã có giá thành công
+            self._disconnect_count = 0
+
+            # Dọn dẹp định kỳ (mỗi 1 giờ) các tín hiệu đã đóng trong SignalTracker
+            if time.time() - self._last_cleanup_time > 3600:
+                self._last_cleanup_time = time.time()
+                self.tracker.cleanup_old_signals(max_age_hours=48)
 
             current_price = float(price_info.get("bid", 0.0))
             self.last_price = current_price
@@ -176,13 +264,46 @@ class LiveBotRunner:
                         else:
                             duration_str = f"{mins // 60}h {mins % 60}m"
 
+                    # Phân tích chuyên sâu nguyên nhân kết quả lệnh qua TradeOutcomeAnalyzer
+                    outcome_analysis = TradeOutcomeAnalyzer.analyze(
+                        signal=sig,
+                        final_status=sig.status.value,
+                        exit_price=current_price,
+                        duration_seconds=diff_sec or 0,
+                    )
+                    notes_json = json.dumps(outcome_analysis.to_dict(), ensure_ascii=False)
+
                     self.signal_repo.save_outcome(
                         signal_id=sig.signal_id,
                         final_status=sig.status.value,
                         exit_price=current_price,
                         pnl_points=round(pnl_pts, 2),
+                        pnl_r=round(outcome_analysis.pnl_r, 2),
                         duration_seconds=diff_sec,
+                        notes=notes_json,
                     )
+
+                    # Đóng vị thế tương ứng trên Ví Đầu Tư Ảo (nếu có lệnh đang mở)
+                    try:
+                        self.paper_engine.close_position_by_signal(
+                            signal_id=sig.signal_id,
+                            current_price=current_price,
+                            reason=sig.status.value,
+                        )
+                    except Exception as e:
+                        log.debug("Lỗi đóng lệnh Paper Wallet theo signal: %s", e)
+
+                    # Xóa trạng thái trong AI Copilot
+                    try:
+                        self.ai_copilot.clear_signal(sig.signal_id)
+                    except Exception:
+                        pass
+
+                    # Tự động cập nhật ma trận thích ứng Self-Learning
+                    try:
+                        self.feedback_engine.refresh()
+                    except Exception:
+                        pass
 
                     # Lấy thống kê hiệu suất tích lũy sau lệnh vừa đóng
                     perf_stats = None
@@ -204,13 +325,40 @@ class LiveBotRunner:
                 # Gửi thông báo cập nhật qua Telegram
                 self.notifier.notify_status_update(sig, current_price)
 
+            # 2a. Tự động kiểm tra và nâng Stop Loss (Risk-Free Breakeven + Dynamic Trailing Stop)
+            try:
+                self.check_trailing_stop_and_breakeven(current_price=current_price)
+            except Exception as e:
+                log.debug("Lỗi kiểm tra Trailing Stop / Breakeven: %s", e)
+
             # 2b. Tự động kiểm tra và phát bài viết Tin Nóng sau khi tin ra 2-3 phút
             try:
                 self.check_realtime_news_releases(current_price=current_price, now_utc=now_utc)
             except Exception as e:
                 log.debug("Lỗi kiểm tra tin tức thời gian thực: %s", e)
 
-            # 3. Thu thập nến M5 và kiểm tra nến mới
+            # 2c. Tự động bám sát giá và quản trị vị thế trên Ví Đầu Tư Ảo (Paper Wallet 0.01 lot)
+            try:
+                spread = float(price_info.get("spread", 0.3))
+                half_sp = spread / 2.0
+                self.paper_engine.update_positions(
+                    current_bid=round(current_price - half_sp, 2),
+                    current_ask=round(current_price + half_sp, 2),
+                )
+            except Exception as e:
+                log.debug("Lỗi cập nhật Paper Engine: %s", e)
+
+            # 2d. AI Trading Copilot: Trò chuyện và đồng hành thời gian thực cùng anh em trader
+            try:
+                self.check_ai_copilot_companion(current_price=current_price, now_utc=now_utc)
+            except Exception as e:
+                log.debug("Lỗi AI Copilot Companion: %s", e)
+
+            # 3. Thu thập nến M5 và kiểm tra nến mới (Lightweight check 2 bars trước khi tải 100 nến)
+            has_new_candle, _ = self.data_mgr.check_new_candle(Timeframe.M5, self.last_processed_m5_time)
+            if not has_new_candle:
+                return None
+
             df_m5 = self.data_mgr.get_candles(Timeframe.M5, num_bars=100)
             if df_m5 is None or len(df_m5) < 30:
                 return None
@@ -232,6 +380,16 @@ class LiveBotRunner:
                 self.check_early_structural_exit(close_price=close_price)
             except Exception as e:
                 log.debug("Lỗi kiểm tra early structural exit: %s", e)
+
+            # Kiểm tra Cảnh Báo Chốt Lời Sớm (Động lượng suy yếu & Lệnh ứ đọng)
+            try:
+                self.check_momentum_exhaustion_and_stagnation(
+                    df_m5=df_m5,
+                    current_price=close_price,
+                    now_utc=now_utc,
+                )
+            except Exception as e:
+                log.debug("Lỗi kiểm tra momentum exhaustion & stagnation: %s", e)
 
             # Lưu nến vào database
             try:
@@ -265,9 +423,12 @@ class LiveBotRunner:
                 timeframe="M5",
             )
 
-            # 6. Tinh chỉnh qua bộ lọc Machine Learning (Phase 9)
+            # 6. Tinh chỉnh qua bộ lọc Machine Learning nếu được bật
             spread = float(price_info.get("spread", 0.3))
-            final_signal = self.ml_filter.apply(raw_signal, df_m5, spread=spread)
+            if self.ml_filter:
+                final_signal = self.ml_filter.apply(raw_signal, df_m5, spread=spread)
+            else:
+                final_signal = raw_signal
 
             # 7. Xử lý tín hiệu BUY hoặc SELL
             if final_signal.direction in (SignalDirection.BUY, SignalDirection.SELL):
@@ -275,24 +436,96 @@ class LiveBotRunner:
                          final_signal.direction.value, self.symbol,
                          final_signal.entry_price, final_signal.score)
 
-                # Chống trùng lặp 2 lớp: Kiểm tra trực tiếp cả ở Database SQLite
+                # Chống trùng lặp & Anti-Hedging Guard: Kiểm tra trực tiếp cả ở Database SQLite
                 active_in_db = self.signal_repo.get_active_signals(self.symbol)
                 for s in active_in_db:
                     if s.get("direction") == final_signal.direction.value:
                         log.warning(
-                            "⛔ CHẶN TRÙNG LẶP: Đã có lệnh %s [%s] đang %s trong database. Bỏ qua phát thêm để tránh rủi ro chồng lệnh (Double Exposure).",
+                            "⛔ CHẶN TRÙNG LẶP: Đã có lệnh %s [%s] đang %s trong database. Bỏ qua để tránh rủi ro chồng lệnh (Double Exposure).",
                             final_signal.direction.value, s.get("signal_id"), s.get("status")
                         )
                         return None
+                    else:
+                        # Kiểm tra chế độ Strategic Zone Hedging
+                        if not getattr(self.hedging_cfg, "allow_strategic_hedging", True):
+                            log.warning(
+                                "⛔ CHẶN HEDGING (Chế độ Single Direction): Đang có lệnh %s [%s] (%s). "
+                                "Không mở thêm lệnh %s tuân thủ chuẩn Netting & Prop Firm!",
+                                s.get("direction"), s.get("signal_id"), s.get("status"), final_signal.direction.value
+                            )
+                            return None
+
+                        existing_entry = float(s.get("entry_price", 0.0))
+                        price_diff = abs(final_signal.entry_price - existing_entry)
+                        min_dist = getattr(self.hedging_cfg, "min_hedging_distance_points", 5.0)
+
+                        # Điều kiện 1: Cấm tuyệt đối BUY và SELL chung 1 điểm hoặc lệch nhau 1-2 giá (< min_dist)
+                        if price_diff < min_dist:
+                            log.warning(
+                                "⛔ CHẶN HEDGING CẬN BIÊN (Proximity Guard): Lệnh mới @ %.2f lệch lệnh cũ %s @ %.2f chỉ %.2f giá (< %.1f giá). "
+                                "Cấm tuyệt đối BUY/SELL chung điểm hoặc lệch 1-2 giá để tránh quét Stop Loss 2 đầu và tốn phí vô ích!",
+                                final_signal.entry_price, s.get("direction"), existing_entry, price_diff, min_dist
+                            )
+                            return None
+
+                        # Điều kiện 2: Căn chỉnh sao cho có lời (Lệnh cũ phải đang có lãi bảo vệ rủi ro)
+                        if getattr(self.hedging_cfg, "require_breakeven_or_profit", True):
+                            s_dir = s.get("direction")
+                            existing_gain = (current_price - existing_entry) if s_dir == "BUY" else (existing_entry - current_price)
+                            min_gain = getattr(self.hedging_cfg, "min_existing_profit_points", 3.0)
+                            if existing_gain < min_gain:
+                                log.warning(
+                                    "⛔ CHẶN HEDGING KẸP ĐẦU (Risk-Free Guard): Lệnh cũ %s @ %.2f chưa đủ biên độ lời an toàn (Lời: %.2f giá, cần: %.1f giá). "
+                                    "Chỉ được mở lệnh ngược chiều khi lệnh cũ đã có lời bảo vệ để đảm bảo tổng vị thế có lời!",
+                                    s_dir, existing_entry, existing_gain, min_gain
+                                )
+                                return None
+
+                        log.info(
+                            "✅ CHO PHÉP HEDGING CHIẾN LƯỢC: Lệnh cũ %s @ %.2f (đang lời +%.2f giá), lệnh mới %s @ %.2f (cách %.2f giá). "
+                            "Đạt chuẩn đánh 2 đầu độc lập bảo toàn vốn!",
+                            s.get("direction"), existing_entry, existing_gain, final_signal.direction.value, final_signal.entry_price, price_diff
+                        )
 
                 # Đăng ký vào SignalTracker
                 is_reg = self.tracker.register_signal(final_signal)
                 if is_reg:
-                    # Lưu vào SQLite Database
-                    self.signal_repo.save_signal(final_signal)
+                    # Trích xuất vector 21 đặc trưng kỹ thuật lúc phát tín hiệu
+                    extracted_feats = None
+                    try:
+                        extracted_feats = FeatureExtractor.extract_features(
+                            df_exec=df_m5,
+                            candle_idx=-1,
+                            spread=spread,
+                            h4_trend=final_signal.trend_h4,
+                            h1_trend=final_signal.trend_h1,
+                            swing_high=final_signal.entry_zone_high + 5.0,
+                            swing_low=final_signal.entry_zone_low - 5.0,
+                            regime=final_signal.market_regime,
+                            session_name=final_signal.score_breakdown.get("session_name") if final_signal.score_breakdown else None,
+                            volume_surge=final_signal.score_breakdown.get("volume_surge") if final_signal.score_breakdown else None,
+                            risk_reward=final_signal.risk_reward_ratio,
+                            setup_historical_wr=final_signal.score_breakdown.get("setup_historical_wr") if final_signal.score_breakdown else None,
+                        )
+                    except Exception as e:
+                        log.debug("Lỗi trích xuất features khi lưu signal: %s", e)
+
+                    # Lưu vào SQLite Database kèm đầy đủ 21 features
+                    self.signal_repo.save_signal(final_signal, features=extracted_feats)
 
                     # Gửi tin nhắn Telegram
                     self.notifier.notify_signal(final_signal)
+
+                    # Tự động khớp lệnh ảo 0.01 lot trên Ví Đầu Tư Ảo nếu bật Auto Trading
+                    try:
+                        self.paper_engine.open_position_from_signal(
+                            signal=final_signal,
+                            current_price=current_price,
+                            spread=spread,
+                        )
+                    except Exception as e:
+                        log.debug("Lỗi khớp lệnh Paper Wallet: %s", e)
+
                     return final_signal
 
             return final_signal
@@ -388,6 +621,151 @@ class LiveBotRunner:
                         alerted_ids.append(sig.signal_id)
 
         return alerted_ids
+
+    def check_trailing_stop_and_breakeven(
+        self,
+        current_price: float,
+        df_m5: Optional[pd.DataFrame] = None,
+        market_regime: str = "UNKNOWN",
+        current_spread: float = 0.3,
+    ) -> None:
+        """
+        Kiểm tra và tự động dời Stop Loss (Hòa vốn + Trailing Stop) cho các lệnh đang có lãi qua SmartExitEngine:
+        1. Lãi >= 0.5R (hoặc 5.0 giá): Tự động dời SL về Entry + 0.5 giá (Risk-Free Breakeven bù spread).
+        2. Chốt lời từng phần Tier 1 (50%) & Tier 2 (30%).
+        3. Trailing Stop thích ứng (ATR-Dynamic & Swing Structure).
+        """
+        smart_exit = getattr(self, "smart_exit", None) or SmartExitEngine()
+
+        for sig in self.tracker.active_signals:
+            if sig.status != SignalStatus.ENTRY_REACHED or sig.entry_price <= 0:
+                continue
+
+            decisions = smart_exit.evaluate_signal(
+                signal=sig,
+                current_price=current_price,
+                df_m5=df_m5,
+                market_regime=market_regime,
+                current_spread=current_spread,
+                now_utc=datetime.now(timezone.utc),
+            )
+
+            for d in decisions:
+                if d.new_sl is not None:
+                    old_sl = d.old_sl or sig.stop_loss
+                    sig.stop_loss = d.new_sl
+                    self.signal_repo.update_stop_loss(sig.signal_id, d.new_sl)
+                    log.info(
+                        "🛡️ [%s] Cập nhật SL lệnh %s [%s] -> %.2f (%s)",
+                        d.action_type.value, sig.direction.value, sig.signal_id, d.new_sl, d.reason,
+                    )
+                    if self.notifier and self.notifier.is_enabled:
+                        self.notifier.send_trailing_stop_update(
+                            signal=sig,
+                            current_price=current_price,
+                            old_sl=old_sl,
+                            new_sl=d.new_sl,
+                            locked_points=d.locked_points,
+                        )
+
+                if d.action_type in (ExitActionType.SCALED_EXIT_TIER1, ExitActionType.SCALED_EXIT_TIER2):
+                    log.info(
+                        "🎯 [%s] Khuyến nghị chốt lời %s [%s]: %s",
+                        d.tier_name, sig.direction.value, sig.signal_id, d.reason,
+                    )
+                    if self.notifier and self.notifier.is_enabled:
+                        self.notifier.send_scaled_exit_alert(
+                            signal=sig,
+                            current_price=current_price,
+                            tier_name=d.tier_name,
+                            close_ratio=d.close_ratio,
+                            pnl_points=d.pnl_points,
+                            pnl_r=d.pnl_r,
+                            new_sl=d.new_sl,
+                        )
+
+    def check_momentum_exhaustion_and_stagnation(
+        self,
+        df_m5: pd.DataFrame,
+        current_price: float,
+        now_utc: datetime,
+    ) -> None:
+        """
+        Kiểm tra 2 kịch bản chốt lời chủ động khi nến M5 mới đóng cửa:
+        1. Cảnh báo động lượng suy yếu (Pinbar từ chối / Rejection Wick >= 50% khi đang lãi >= 3 giá).
+        2. Cảnh báo lệnh ứ đọng (Time Decay: giữ lệnh > 60 phút mà giá đi ngang, lãi >= 2 giá).
+        """
+        smart_exit = getattr(self, "smart_exit", None) or SmartExitEngine()
+
+        for sig in self.tracker.active_signals:
+            if sig.status != SignalStatus.ENTRY_REACHED or sig.entry_price <= 0:
+                continue
+
+            d = smart_exit.evaluate_candle_exhaustion(
+                signal=sig,
+                df_m5=df_m5,
+                current_price=current_price,
+                now_utc=now_utc,
+            )
+            if not d:
+                continue
+
+            if d.action_type == ExitActionType.MOMENTUM_EXHAUSTION:
+                candle_time = str(df_m5.iloc[-1].get("time", ""))
+                log.warning(
+                    "⚡ [Exhaustion Alert] Lệnh %s [%s] gặp cản suy yếu @ %.2f (Lãi +%.2f giá)",
+                    sig.direction.value, sig.signal_id, current_price, d.pnl_points,
+                )
+                if self.notifier and self.notifier.is_enabled:
+                    self.notifier.send_momentum_exhaustion_alert(
+                        signal=sig,
+                        current_price=current_price,
+                        pnl_points=d.pnl_points,
+                        exhaustion_reason=d.reason,
+                        candle_time_str=candle_time[:16],
+                    )
+            elif d.action_type == ExitActionType.TIME_STAGNATION:
+                diff_minutes = int(
+                    (now_utc - (sig.created_at if sig.created_at.tzinfo else sig.created_at.replace(tzinfo=timezone.utc))).total_seconds() / 60.0
+                )
+                log.info(
+                    "⏳ [Stagnation Alert] Lệnh %s [%s] ngâm %d phút quanh mức lãi +%.2f giá",
+                    sig.direction.value, sig.signal_id, diff_minutes, d.pnl_points,
+                )
+                if self.notifier and self.notifier.is_enabled:
+                    self.notifier.send_time_stagnation_alert(
+                        signal=sig,
+                        current_price=current_price,
+                        pnl_points=d.pnl_points,
+                        minutes_open=diff_minutes,
+                    )
+
+    def check_ai_copilot_companion(
+        self,
+        current_price: float,
+        now_utc: Optional[datetime] = None,
+    ) -> None:
+        """
+        AI Trading Copilot: Đánh giá trạng thái lệnh đang chạy và gửi tin nhắn đàm đạo,
+        động viên hoặc khuyên cắt lệnh tới anh em trader với phong cách gần gũi và chuyên nghiệp.
+        """
+        if not self.notifier or not self.notifier.is_enabled:
+            return
+
+        for sig in self.tracker.active_signals:
+            if sig.status != SignalStatus.ENTRY_REACHED or sig.entry_price <= 0:
+                continue
+
+            msg = self.ai_copilot.evaluate(
+                signal=sig,
+                current_price=current_price,
+                now_utc=now_utc,
+            )
+            if msg:
+                try:
+                    self.notifier.client.send_message(msg)
+                except Exception as e:
+                    log.debug("Lỗi gửi tin nhắn AI Copilot: %s", e)
 
     def run_forever(self, poll_interval_sec: float = 5.0) -> None:
         """

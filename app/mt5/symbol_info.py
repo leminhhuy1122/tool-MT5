@@ -10,6 +10,7 @@ from typing import Optional
 
 import MetaTrader5 as mt5
 
+from app.mt5.lock import mt5_lock
 from logger import get_logger
 
 log = get_logger("mt5.symbol")
@@ -55,18 +56,19 @@ def check_symbol(symbol: str) -> bool:
         True nếu symbol sẵn sàng.
     """
     # Kiểm tra symbol tồn tại
-    info = mt5.symbol_info(symbol)
-    if info is None:
-        log.error("Symbol '%s' không tồn tại trên broker này", symbol)
-        return False
-
-    # Thêm vào Market Watch nếu chưa hiển thị
-    if not info.visible:
-        log.info("Symbol '%s' chưa hiển thị. Đang thêm vào Market Watch...", symbol)
-        if not mt5.symbol_select(symbol, True):
-            log.error("Không thể thêm '%s' vào Market Watch", symbol)
+    with mt5_lock:
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            log.error("Symbol '%s' không tồn tại trên broker này", symbol)
             return False
-        log.info("✓ Đã thêm '%s' vào Market Watch", symbol)
+
+        # Thêm vào Market Watch nếu chưa hiển thị
+        if not info.visible:
+            log.info("Symbol '%s' chưa hiển thị. Đang thêm vào Market Watch...", symbol)
+            if not mt5.symbol_select(symbol, True):
+                log.error("Không thể thêm '%s' vào Market Watch", symbol)
+                return False
+            log.info("✓ Đã thêm '%s' vào Market Watch", symbol)
 
     log.info("✓ Symbol '%s' sẵn sàng", symbol)
     return True
@@ -82,11 +84,12 @@ def get_symbol_info(symbol: str) -> Optional[SymbolInfo]:
     Returns:
         SymbolInfo nếu thành công, None nếu lỗi.
     """
-    info = mt5.symbol_info(symbol)
-    if info is None:
-        error = mt5.last_error()
-        log.error("Không lấy được thông tin '%s': %s", symbol, error)
-        return None
+    with mt5_lock:
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            error = mt5.last_error()
+            log.error("Không lấy được thông tin '%s': %s", symbol, error)
+            return None
 
     sym = SymbolInfo(
         name=info.name,

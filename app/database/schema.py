@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS signals (
     invalidation TEXT,
     trend_h4 TEXT,
     trend_h1 TEXT,
+    market_regime TEXT DEFAULT 'UNKNOWN',
     created_at TIMESTAMP,
     expires_at TIMESTAMP,
     updated_at TIMESTAMP
@@ -142,3 +143,84 @@ CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at);
 CREATE INDEX IF NOT EXISTS idx_market_data_lookup ON market_data(symbol, timeframe, time);
 CREATE INDEX IF NOT EXISTS idx_signal_features_sig_id ON signal_features(signal_id);
 """
+
+# Migration v2: Paper Trading Simulator & Virtual Wallet Tables
+MIGRATION_V2_SQL = """
+-- 9. Bảng Ví Đầu Tư Ảo (Paper Wallets)
+CREATE TABLE IF NOT EXISTS paper_wallets (
+    wallet_id TEXT PRIMARY KEY DEFAULT 'default',
+    name TEXT NOT NULL DEFAULT 'Ví Demo 0.01 Lot',
+    initial_balance REAL NOT NULL DEFAULT 50.0,
+    balance REAL NOT NULL DEFAULT 50.0,
+    equity REAL NOT NULL DEFAULT 50.0,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    leverage INTEGER NOT NULL DEFAULT 500,
+    default_lot REAL NOT NULL DEFAULT 0.01,
+    is_auto_trading INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 10. Bảng Lệnh Đang Chạy Trên Ví Ảo (Paper Positions)
+CREATE TABLE IF NOT EXISTS paper_positions (
+    position_id TEXT PRIMARY KEY,
+    wallet_id TEXT NOT NULL DEFAULT 'default',
+    signal_id TEXT,
+    symbol TEXT NOT NULL DEFAULT 'XAUUSD',
+    direction TEXT NOT NULL,
+    volume REAL NOT NULL DEFAULT 0.01,
+    open_price REAL NOT NULL,
+    current_price REAL NOT NULL,
+    stop_loss REAL NOT NULL,
+    take_profit_1 REAL NOT NULL,
+    take_profit_2 REAL,
+    floating_pnl REAL DEFAULT 0.0,
+    floating_pnl_percent REAL DEFAULT 0.0,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    open_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (wallet_id) REFERENCES paper_wallets(wallet_id) ON DELETE CASCADE
+);
+
+-- 11. Bảng Lịch Sử Lệnh Đã Đóng Trên Ví Ảo (Paper Trades History)
+CREATE TABLE IF NOT EXISTS paper_trades_history (
+    trade_id TEXT PRIMARY KEY,
+    wallet_id TEXT NOT NULL DEFAULT 'default',
+    signal_id TEXT,
+    symbol TEXT NOT NULL DEFAULT 'XAUUSD',
+    direction TEXT NOT NULL,
+    volume REAL NOT NULL DEFAULT 0.01,
+    open_price REAL NOT NULL,
+    close_price REAL NOT NULL,
+    stop_loss REAL,
+    take_profit REAL,
+    pnl_usd REAL NOT NULL DEFAULT 0.0,
+    pnl_percent REAL NOT NULL DEFAULT 0.0,
+    pnl_pips REAL NOT NULL DEFAULT 0.0,
+    close_reason TEXT NOT NULL,
+    open_time TIMESTAMP,
+    close_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    duration_seconds INTEGER DEFAULT 0,
+    FOREIGN KEY (wallet_id) REFERENCES paper_wallets(wallet_id) ON DELETE CASCADE
+);
+
+-- 12. Bảng Lưu Biến Động Vốn & Tài Sản (Equity Snapshots)
+CREATE TABLE IF NOT EXISTS paper_equity_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet_id TEXT NOT NULL DEFAULT 'default',
+    balance REAL NOT NULL,
+    equity REAL NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (wallet_id) REFERENCES paper_wallets(wallet_id) ON DELETE CASCADE
+);
+
+-- Khởi tạo ví ảo mặc định nếu chưa có
+INSERT OR IGNORE INTO paper_wallets (wallet_id, name, initial_balance, balance, equity, currency, leverage, default_lot, is_auto_trading)
+VALUES ('default', 'Ví Đầu Tư Ảo (Mặc định)', 50.0, 50.0, 50.0, 'USD', 500, 0.01, 1);
+
+-- Chỉ mục cho ví ảo
+CREATE INDEX IF NOT EXISTS idx_paper_positions_wallet ON paper_positions(wallet_id, status);
+CREATE INDEX IF NOT EXISTS idx_paper_trades_wallet ON paper_trades_history(wallet_id, close_time);
+CREATE INDEX IF NOT EXISTS idx_paper_equity_wallet ON paper_equity_snapshots(wallet_id, timestamp);
+"""
+

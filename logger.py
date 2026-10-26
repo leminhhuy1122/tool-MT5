@@ -9,6 +9,7 @@ Thiết lập logging cho toàn bộ ứng dụng.
 """
 
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -63,9 +64,13 @@ def setup_logging(
 
         today = datetime.now().strftime("%Y-%m-%d")
         log_file = log_dir / f"vietkey_{today}.log"
-
-        file_handler = logging.FileHandler(
-            log_file, encoding="utf-8", mode="a"
+        # Rotating file handler: giới hạn 10MB mỗi file, tối đa 5 file backups
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+            mode="a",
         )
         file_handler.setLevel(numeric_level)
         file_handler.setFormatter(
@@ -73,7 +78,7 @@ def setup_logging(
         )
         root_logger.addHandler(file_handler)
 
-        root_logger.info("Log file: %s", log_file)
+        root_logger.info("Log file (rotating 10MB): %s", log_file)
 
     return root_logger
 

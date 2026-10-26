@@ -45,6 +45,18 @@ class ModelMetrics:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "ModelMetrics":
+        return cls(
+            accuracy=float(data.get("accuracy", 0.0)),
+            precision=float(data.get("precision", 0.0)),
+            recall=float(data.get("recall", 0.0)),
+            f1=float(data.get("f1", 0.0)),
+            roc_auc=float(data.get("roc_auc", 0.0)),
+            brier_score=float(data.get("brier_score", 1.0)),
+            sample_size=int(data.get("sample_size", 0)),
+        )
+
 
 class SignalQualityClassifier:
     """Mô hình phân loại và dự đoán xác suất thành công của tín hiệu."""
@@ -131,6 +143,67 @@ class SignalQualityClassifier:
         except Exception as e:
             log.warning("Lỗi predict_confidence: %s", e)
             return 0.50
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        """
+        Dự đoán mảng xác suất nhãn dương (P(y=1)) cho tập dữ liệu X.
+        """
+        if not self.is_trained or len(X) == 0:
+            return np.full(len(X), 0.50)
+        X_clean = X[self.feature_names].fillna(0.0)
+        try:
+            if hasattr(self.classifier, "predict_proba"):
+                return self.classifier.predict_proba(X_clean)[:, 1]
+            return self.classifier.predict(X_clean).astype(float)
+        except Exception as e:
+            log.warning("Lỗi predict_proba: %s", e)
+            return np.full(len(X), 0.50)
+
+    def get_feature_importances(self) -> dict[str, float]:
+        """Trả về xếp hạng mức độ quan trọng của các đặc trưng (Feature Importances)."""
+        if not self.is_trained or not hasattr(self.classifier, "feature_importances_"):
+            return {}
+        importances = self.classifier.feature_importances_
+        sorted_pairs = sorted(
+            zip(self.feature_names, importances),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        return {name: round(float(imp), 4) for name, imp in sorted_pairs}
+
+    def find_optimal_threshold(
+        self,
+        X_val: pd.DataFrame,
+        y_val: pd.Series,
+        target_metric: str = "f1",
+    ) -> float:
+        """
+        Tìm ngưỡng xác suất phân loại (classification threshold) tối ưu trên tập Validation.
+        """
+        if not self.is_trained or len(X_val) == 0:
+            return 0.50
+
+        X_clean = X_val[self.feature_names].fillna(0.0)
+        try:
+            probas = self.classifier.predict_proba(X_clean)[:, 1]
+        except Exception:
+            return 0.50
+
+        best_threshold = 0.50
+        best_score = -1.0
+
+        for thresh in np.arange(0.35, 0.75, 0.05):
+            preds = (probas >= thresh).astype(int)
+            if target_metric == "precision":
+                score = float(precision_score(y_val, preds, zero_division=0))
+            else:
+                score = float(f1_score(y_val, preds, zero_division=0))
+
+            if score > best_score:
+                best_score = score
+                best_threshold = float(thresh)
+
+        return round(best_threshold, 2)
 
     def save(self, filepath: str) -> bool:
         """Lưu mô hình ra file .joblib."""

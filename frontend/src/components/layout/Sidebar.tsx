@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Radio,
   Settings,
+  Wallet,
 } from 'lucide-react';
 import type { BotStatus, MenuId } from '../../types';
 
@@ -35,6 +36,13 @@ const PRIMARY_NAV_ITEMS: { id: MenuId; label: string; icon: React.ReactNode; bad
     desc: 'Nhật ký lệnh & Bắn lại Telegram',
   },
   {
+    id: 'paper-wallet',
+    label: 'Ví Đầu Tư Ảo',
+    icon: <Wallet size={18} />,
+    badge: '0.01 Lot',
+    desc: 'Giả lập nạp vốn $50 & tự động khớp lệnh',
+  },
+  {
     id: 'news',
     label: 'Tin Tức & Dự Báo AI',
     icon: <Calendar size={18} />,
@@ -43,10 +51,10 @@ const PRIMARY_NAV_ITEMS: { id: MenuId; label: string; icon: React.ReactNode; bad
   },
   {
     id: 'system',
-    label: 'Hệ Thống & Cài Đặt',
+    label: 'Hệ Thống & Tìm Lỗi',
     icon: <Settings size={18} />,
-    badge: 'Bot',
-    desc: 'Cấu hình Telegram, MT5 & SQLite',
+    badge: 'Monitor',
+    desc: 'Giám sát bot, xem log & bắt lỗi',
   },
 ];
 
@@ -59,7 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onCloseMobile,
 }) => {
-  // Normalize legacy menu IDs to one of the 4 primary tabs
+  // Normalize legacy menu IDs to one of the primary tabs
   const activePrimaryId: MenuId =
     currentMenu === 'overview'
       ? 'overview'
@@ -67,6 +75,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ? 'signals'
       : currentMenu === 'news' || currentMenu === 'economic-calendar'
       ? 'news'
+      : currentMenu === 'paper-wallet'
+      ? 'paper-wallet'
       : 'system';
 
   return (

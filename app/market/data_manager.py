@@ -12,13 +12,15 @@ Lấy và chuẩn hóa dữ liệu thị trường từ MetaTrader 5:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import MetaTrader5 as mt5
 
 from app.market.timeframe_manager import Timeframe, DEFAULT_BAR_COUNTS
+from app.mt5.lock import mt5_lock
+from app.system.resource_optimizer import BoundedDataCache
 from logger import get_logger
 
 log = get_logger("market.data")
@@ -80,25 +82,54 @@ class MarketDataManager:
         quality = manager.validate(df, Timeframe.H1)
     """
 
-    def __init__(self, symbol: str = "XAUUSD") -> None:
+    def __init__(
+        self,
+        symbol: str = "XAUUSD",
+        max_bars: int = 200,
+        cache_ttl_sec: float = 3.0,
+    ) -> None:
         """
-        Khởi tạo data manager.
+        Khởi tạo data manager với Bounded Cache.
 
         Args:
             symbol: Symbol cần lấy dữ liệu.
+            max_bars: Số nến tối đa lưu trữ trong RAM cho mỗi timeframe.
+            cache_ttl_sec: Thời gian sống TTL của cache (giây).
         """
         self._symbol = symbol
-        self._cache: dict[Timeframe, pd.DataFrame] = {}
+        self._cache = BoundedDataCache(max_bars=max_bars, ttl_seconds=cache_ttl_sec)
 
     @property
     def symbol(self) -> str:
         return self._symbol
+
+    def check_new_candle(
+        self,
+        timeframe: Timeframe,
+        last_time: Optional[datetime],
+    ) -> Tuple[bool, Optional[datetime]]:
+        """
+        Kiểm tra nhanh xem có nến mới đóng hay không chỉ với 2 bars (thay vì tải 100 nến).
+        Giúp tiết kiệm 98% tài nguyên IPC với MT5 trong vòng lặp thời gian thực.
+        """
+        with mt5_lock:
+            rates = mt5.copy_rates_from_pos(self._symbol, timeframe.mt5_const, 0, 2)
+            if rates is None or len(rates) < 2:
+                return True, None
+            bar_ts = int(rates[-2]["time"])
+            bar_dt = datetime.fromtimestamp(bar_ts, tz=timezone.utc)
+            if last_time is not None:
+                last_utc = last_time if last_time.tzinfo else last_time.replace(tzinfo=timezone.utc)
+                if bar_dt <= last_utc:
+                    return False, bar_dt
+            return True, bar_dt
 
     def get_candles(
         self,
         timeframe: Timeframe,
         num_bars: Optional[int] = None,
         include_unclosed: bool = False,
+        use_cache: bool = False,
     ) -> Optional[pd.DataFrame]:
         """
         Lấy historical candles từ MT5.
@@ -108,6 +139,7 @@ class MarketDataManager:
             num_bars: Số nến cần lấy. None = dùng default.
             include_unclosed: Có giữ nến chưa đóng không.
                               Mặc định False (loại bỏ nến hiện tại).
+            use_cache: Có ưu tiên lấy từ BoundedDataCache nếu còn hạn TTL không.
 
         Returns:
             DataFrame với columns: time, open, high, low, close, tick_volume, spread.
@@ -116,6 +148,11 @@ class MarketDataManager:
         if num_bars is None:
             num_bars = DEFAULT_BAR_COUNTS.get(timeframe, 200)
 
+        if use_cache and not include_unclosed:
+            cached_df = self._cache.get(timeframe)
+            if cached_df is not None and len(cached_df) >= num_bars:
+                return cached_df.tail(num_bars).copy()
+
         log.debug(
             "Lấy %d nến %s %s...", num_bars, self._symbol, timeframe.label
         )
@@ -123,20 +160,21 @@ class MarketDataManager:
         # Lấy thêm 1 nến (nến hiện tại chưa đóng) để có thể loại bỏ
         fetch_count = num_bars + 1 if not include_unclosed else num_bars
 
-        rates = mt5.copy_rates_from_pos(
-            self._symbol,
-            timeframe.mt5_const,
-            0,  # bắt đầu từ nến hiện tại
-            fetch_count,
-        )
-
-        if rates is None or len(rates) == 0:
-            error = mt5.last_error()
-            log.error(
-                "Không lấy được dữ liệu %s %s: %s",
-                self._symbol, timeframe.label, error,
+        with mt5_lock:
+            rates = mt5.copy_rates_from_pos(
+                self._symbol,
+                timeframe.mt5_const,
+                0,  # bắt đầu từ nến hiện tại
+                fetch_count,
             )
-            return None
+
+            if rates is None or len(rates) == 0:
+                error = mt5.last_error()
+                log.error(
+                    "Không lấy được dữ liệu %s %s: %s",
+                    self._symbol, timeframe.label, error,
+                )
+                return None
 
         # Chuyển sang DataFrame
         df = pd.DataFrame(rates)
@@ -286,7 +324,8 @@ class MarketDataManager:
         Returns:
             Dictionary với bid, ask, spread, time. None nếu lỗi.
         """
-        tick = mt5.symbol_info_tick(self._symbol)
+        with mt5_lock:
+            tick = mt5.symbol_info_tick(self._symbol)
         if tick is None:
             log.error("Không lấy được tick %s", self._symbol)
             return None

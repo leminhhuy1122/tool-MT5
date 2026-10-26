@@ -99,3 +99,26 @@ def test_ai_news_settings_route():
     assert "openai_model" in res
     assert "auto_post_enabled" in res
 
+
+def test_get_setups_performance_route():
+    """Kiểm tra endpoint /api/v1/performance/setups."""
+    from app.api.server import get_setups_performance
+    res = get_setups_performance()
+    assert "hasData" in res
+    assert "setups" in res
+
+
+def test_get_ml_models_and_status_routes():
+    """Kiểm tra endpoints /api/v1/ml/models và /api/v1/ml/status."""
+    from app.api.server import get_ml_models, get_ml_system_status
+    status_res = get_ml_system_status()
+    assert "is_active" in status_res
+    assert "mode" in status_res
+
+    models_res = get_ml_models()
+    assert "total_models" in models_res
+    assert "models" in models_res
+    assert isinstance(models_res["models"], list)
+
+
+

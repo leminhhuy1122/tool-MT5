@@ -36,6 +36,8 @@ export interface SignalItem {
   score: number; // 0 - 100 Confluence Score (chưa phải xác suất thắng)
   status: SignalStatus;
   strategyVersion: string;
+  setupType?: string;
+  isPredictive?: boolean;
   modelVersion?: string;
   reason: string;
   invalidation: string;
@@ -43,7 +45,13 @@ export interface SignalItem {
   confluences?: ConfluenceItem[];
   mfePoints?: number;
   maePoints?: number;
-  pnlPoints?: number;
+  pnlPoints?: number | null;
+  pnlPips?: number | null;
+  isWin?: boolean;
+  isLoss?: boolean;
+  isBreakeven?: boolean;
+  exitPrice?: number | null;
+  durationSeconds?: number | null;
   breakevenTriggered?: boolean;
   partialClosed?: boolean;
 }
@@ -67,6 +75,25 @@ export interface MarketOverviewData {
   lastUpdate: string;
 }
 
+export interface PaperWalletOverviewSummary {
+  balance: number;
+  equity: number;
+  floatingPnl: number;
+  netProfitUsd: number;
+  roiPercent: number;
+  openCount: number;
+  isAutoTrading: boolean;
+  defaultLot: number;
+  usedMargin: number;
+  freeMargin: number;
+  marginLevel: number;
+  winRate: number;
+  totalTrades: number;
+  winningTrades?: number;
+  losingTrades?: number;
+  openPositions?: PaperPositionItem[];
+}
+
 export interface StatusCardData {
   botStatus: BotStatus;
   mt5Status: MT5Status;
@@ -78,6 +105,7 @@ export interface StatusCardData {
   ramUsageMB: number;
   ramUsagePct: number;
   cpuUsagePct: number;
+  paperWallet?: PaperWalletOverviewSummary;
 }
 
 export interface PerformanceStrategyItem {
@@ -118,10 +146,100 @@ export interface SystemMonitoringData {
   ramHistory: number[];
 }
 
+export interface LogItem {
+  id: number;
+  timestamp: string;
+  level: 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL' | 'DEBUG';
+  module: string;
+  message: string;
+  isError: boolean;
+  isWarning: boolean;
+}
+
+export interface SystemLogsResponse {
+  total: number;
+  errorCount: number;
+  warningCount: number;
+  infoCount: number;
+  filteredCount: number;
+  logs: LogItem[];
+}
+
+export interface SelfTestItem {
+  test: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface SelfTestResponse {
+  ok: boolean;
+  timestamp: string;
+  tests: SelfTestItem[];
+}
+
+export interface SystemDiagnosticsData {
+  status: 'HEALTHY' | 'WARNING' | 'ERROR';
+  stabilityScore: number;
+  uptimeSeconds: number;
+  timestamp: string;
+  mt5: {
+    status: 'CONNECTED' | 'DISCONNECTED';
+    latencyMs: number;
+    symbol: string;
+    bid: number;
+    ask: number;
+    spread: number;
+    account: {
+      login?: number;
+      server?: string;
+      leverage?: number;
+      tradeAllowed?: boolean;
+      balance?: number;
+      equity?: number;
+    };
+  };
+  database: {
+    status: 'HEALTHY' | 'ERROR';
+    journalMode: string;
+    integrity: string;
+    fileSizeMB: number;
+    signalsCount: number;
+    tradesCount: number;
+    path: string;
+  };
+  botRunner: {
+    status: 'RUNNING' | 'IDLE' | 'STOPPED';
+    activeTrackingSignals: number;
+    lastM5ProcessedTime?: string;
+    antiHedgingMode: string;
+    mlFilterEnabled: boolean;
+  };
+  smartExitAndCopilot: {
+    status: string;
+    copilotCompanion: string;
+    beTriggerR: number;
+    trailingAtrMult: number;
+  };
+  resources: {
+    pid: number;
+    cpuPct: number;
+    ramMB: number;
+    systemRamPct: number;
+    diskFreeGB: number;
+  };
+  errorDiagnostics: {
+    errorCount24h: number;
+    warningCount24h: number;
+    totalLogsParsed: number;
+    recentErrors: LogItem[];
+  };
+}
+
 export type MenuId =
   | 'overview'
   | 'signals'
   | 'news'
+  | 'paper-wallet'
   | 'system'
   | 'live-signals'
   | 'market-analysis'
@@ -135,6 +253,76 @@ export type MenuId =
   | 'system-monitoring'
   | 'logs'
   | 'settings';
+
+export interface PaperWalletData {
+  wallet_id: string;
+  name: string;
+  initial_balance: number;
+  balance: number;
+  equity: number;
+  currency: string;
+  leverage: number;
+  default_lot: number;
+  is_auto_trading: boolean;
+  used_margin: number;
+  free_margin: number;
+  margin_level: number;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number;
+  profit_factor: number;
+  floating_pnl: number;
+  net_profit_usd: number;
+  roi_percent: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PaperPositionItem {
+  position_id: string;
+  wallet_id: string;
+  signal_id?: string;
+  symbol: string;
+  direction: 'BUY' | 'SELL';
+  volume: number;
+  open_price: number;
+  current_price: number;
+  stop_loss: number;
+  take_profit_1: number;
+  take_profit_2?: number;
+  floating_pnl: number;
+  floating_pnl_percent: number;
+  status: string;
+  open_time: string;
+  last_update?: string;
+}
+
+export interface PaperTradeHistoryItem {
+  trade_id: string;
+  wallet_id: string;
+  signal_id?: string;
+  symbol: string;
+  direction: 'BUY' | 'SELL';
+  volume: number;
+  open_price: number;
+  close_price: number;
+  stop_loss?: number;
+  take_profit?: number;
+  pnl_usd: number;
+  pnl_percent: number;
+  pnl_pips: number;
+  close_reason: string;
+  open_time?: string;
+  close_time?: string;
+  duration_seconds: number;
+}
+
+export interface PaperEquitySnapshot {
+  timestamp: string;
+  balance: number;
+  equity: number;
+}
 
 export interface EconomicEventItem {
   id: string;

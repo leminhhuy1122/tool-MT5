@@ -725,3 +725,84 @@ html, body, #root {
     padding: 14px;
   }
 }
+
+/* ==========================================================================
+   Keyframes & Micro-Animations: AI Thinking & Radar Effects
+   ========================================================================== */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spin-reverse {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes breathGlow {
+  0%, 100% {
+    box-shadow: 0 0 25px rgba(56, 189, 248, 0.3), inset 0 0 15px rgba(56, 189, 248, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 45px rgba(56, 189, 248, 0.6), inset 0 0 25px rgba(56, 189, 248, 0.3);
+  }
+}
+
+.animate-spin {
+  animation: spin 10s linear infinite;
+}
+
+.animate-spin-reverse {
+  animation: spin-reverse 15s linear infinite;
+}
+
+.animate-pulse {
+  animation: pulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-breath {
+  animation: breathGlow 3s ease-in-out infinite;
+}
+
+.live-dot.pulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+/* Row hover effect for signals table */
+.clickable-signal-row {
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.clickable-signal-row:hover {
+  background-color: rgba(56, 189, 248, 0.08) !important;
+}
+
+.clickable-signal-row:hover td:last-child svg {
+  color: #38BDF8 !important;
+  transform: translateX(2px);
+  transition: all 0.15s ease;
+}
+
+.clickable-signal-row:active {
+  background-color: rgba(56, 189, 248, 0.14) !important;
+}

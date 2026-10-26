@@ -10,6 +10,13 @@ import type {
   NewsCalendarData,
   BroadcastNewsPayload,
   TelegramStatusData,
+  PaperWalletData,
+  PaperPositionItem,
+  PaperTradeHistoryItem,
+  PaperEquitySnapshot,
+  SystemDiagnosticsData,
+  SystemLogsResponse,
+  SelfTestResponse,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -81,6 +88,31 @@ export const api = {
    */
   async getSystemMetrics(): Promise<SystemMonitoringData> {
     return fetchJson<SystemMonitoringData>(`${API_BASE}/system/metrics`);
+  },
+
+  /**
+   * Lấy chẩn đoán sức khỏe hệ thống toàn diện, trạng thái phân hệ và thống kê lỗi.
+   */
+  async getSystemDiagnostics(): Promise<SystemDiagnosticsData> {
+    return fetchJson<SystemDiagnosticsData>(`${API_BASE}/system/diagnostics`);
+  },
+
+  /**
+   * Truy vấn nhật ký hệ thống thời gian thực với bộ lọc lỗi, cảnh báo và tìm kiếm.
+   */
+  async getSystemLogs(level: string = 'ALL', limit: number = 100, search?: string): Promise<SystemLogsResponse> {
+    const params = new URLSearchParams();
+    if (level) params.append('level', level);
+    if (limit) params.append('limit', String(limit));
+    if (search && search.trim()) params.append('search', search.trim());
+    return fetchJson<SystemLogsResponse>(`${API_BASE}/system/logs?${params.toString()}`);
+  },
+
+  /**
+   * Chạy bài tự kiểm tra (Self-Diagnostics Test) cho các kết nối MT5, SQLite, Paper Wallet, Disk.
+   */
+  async runSystemSelfTest(): Promise<SelfTestResponse> {
+    return postJson<SelfTestResponse>(`${API_BASE}/system/run-self-test`, {});
   },
 
   /**
@@ -189,6 +221,41 @@ export const api = {
    */
   async dispatchFlashNews(payload?: { event_id?: string; use_ai?: boolean; publish_now?: boolean }): Promise<{ ok: boolean; eventTitle: string; minutesAgo: number; published: boolean; content: string; has_openai: boolean }> {
     return postJson<any>(`${API_BASE}/news/dispatch-flash`, payload || { use_ai: true, publish_now: true });
+  },
+
+  // ==========================================
+  // PAPER TRADING VIRTUAL WALLET APIS
+  // ==========================================
+  async getPaperWalletOverview(): Promise<{ wallet: PaperWalletData; openPositionsCount: number; closedTradesCount: number }> {
+    return fetchJson<{ wallet: PaperWalletData; openPositionsCount: number; closedTradesCount: number }>(`${API_BASE}/paper-wallet/overview`);
+  },
+
+  async setupPaperWallet(payload: { initial_balance: number; default_lot?: number; leverage?: number }): Promise<{ ok: boolean; message: string; wallet: PaperWalletData }> {
+    return postJson<{ ok: boolean; message: string; wallet: PaperWalletData }>(`${API_BASE}/paper-wallet/setup`, payload);
+  },
+
+  async resetPaperWallet(initial_balance?: number): Promise<{ ok: boolean; message: string; wallet: PaperWalletData }> {
+    return postJson<{ ok: boolean; message: string; wallet: PaperWalletData }>(`${API_BASE}/paper-wallet/reset`, { initial_balance });
+  },
+
+  async togglePaperAutoTrading(enabled?: boolean): Promise<{ ok: boolean; is_auto_trading: boolean; message: string }> {
+    return postJson<{ ok: boolean; is_auto_trading: boolean; message: string }>(`${API_BASE}/paper-wallet/toggle-auto`, { enabled });
+  },
+
+  async getPaperPositions(): Promise<PaperPositionItem[]> {
+    return fetchJson<PaperPositionItem[]>(`${API_BASE}/paper-wallet/positions`);
+  },
+
+  async closePaperPosition(position_id: string): Promise<{ ok: boolean; message: string; trade: PaperTradeHistoryItem }> {
+    return postJson<{ ok: boolean; message: string; trade: PaperTradeHistoryItem }>(`${API_BASE}/paper-wallet/close-position`, { position_id });
+  },
+
+  async getPaperHistory(limit: number = 50): Promise<PaperTradeHistoryItem[]> {
+    return fetchJson<PaperTradeHistoryItem[]>(`${API_BASE}/paper-wallet/history?limit=${limit}`);
+  },
+
+  async getPaperEquityCurve(limit: number = 100): Promise<PaperEquitySnapshot[]> {
+    return fetchJson<PaperEquitySnapshot[]>(`${API_BASE}/paper-wallet/equity-curve?limit=${limit}`);
   },
 };
 

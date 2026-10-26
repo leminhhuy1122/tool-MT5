@@ -188,6 +188,77 @@ class NewsAutoPostConfig:
         )
 
 
+@dataclass(frozen=True)
+class OptimizationConfig:
+    """Cấu hình tối ưu hóa tài nguyên hệ thống (Phase 10)."""
+
+    enable_ml_filter: bool = field(default=True)
+    enable_self_learning: bool = field(default=True)
+    max_cached_candles: int = field(default=200)
+    data_cache_ttl_sec: float = field(default=3.0)
+    enable_process_singleton: bool = field(default=True)
+    benchmark_interval_sec: float = field(default=300.0)
+
+    @classmethod
+    def from_env(cls) -> "OptimizationConfig":
+        return cls(
+            enable_ml_filter=_get_env("ENABLE_ML_FILTER", default="true").lower() in ("true", "1", "yes"),
+            enable_self_learning=_get_env("ENABLE_SELF_LEARNING", default="true").lower() in ("true", "1", "yes"),
+            max_cached_candles=int(_get_env("MAX_CACHED_CANDLES", default="200")),
+            data_cache_ttl_sec=float(_get_env("DATA_CACHE_TTL_SEC", default="3.0")),
+            enable_process_singleton=_get_env("ENABLE_PROCESS_SINGLETON", default="true").lower() in ("true", "1", "yes"),
+            benchmark_interval_sec=float(_get_env("BENCHMARK_INTERVAL_SEC", default="300.0")),
+        )
+
+
+@dataclass(frozen=True)
+class SmartExitConfig:
+    """Cấu hình động cơ thoát lệnh và bảo vệ lợi nhuận thích ứng (Phase 12)."""
+
+    enabled: bool = field(default=True)
+    be_trigger_r: float = field(default=1.0)              # Ngưỡng kéo BE theo R (mặc định 1.0R)
+    be_cushion_min_pts: float = field(default=0.5)        # Mức đệm tối thiểu cho BE (bù spread)
+    trailing_trigger_r: float = field(default=1.5)        # Ngưỡng kích hoạt Trailing Stop (1.5R)
+    trailing_atr_multiplier: float = field(default=1.5)   # Hệ số nhân ATR cho khoảng cách trailing
+    enable_swing_trailing: bool = field(default=True)     # Cho phép bám theo Swing High/Low M5
+    enable_scaled_exits: bool = field(default=True)       # Bật khuyến nghị chốt lời từng bậc 50/30/20
+    tier1_r_threshold: float = field(default=1.0)         # Ngưỡng chốt 50% Tier 1 (+1.0R)
+    tier2_r_threshold: float = field(default=2.0)         # Ngưỡng chốt thêm 30% Tier 2 (+2.0R)
+
+    @classmethod
+    def from_env(cls) -> "SmartExitConfig":
+        return cls(
+            enabled=_get_env("SMART_EXIT_ENABLED", default="true").lower() in ("true", "1", "yes"),
+            be_trigger_r=float(_get_env("SMART_EXIT_BE_TRIGGER_R", default="1.0")),
+            be_cushion_min_pts=float(_get_env("SMART_EXIT_BE_CUSHION_MIN", default="0.5")),
+            trailing_trigger_r=float(_get_env("SMART_EXIT_TRAILING_TRIGGER_R", default="1.5")),
+            trailing_atr_multiplier=float(_get_env("SMART_EXIT_ATR_MULT", default="1.5")),
+            enable_swing_trailing=_get_env("SMART_EXIT_ENABLE_SWING", default="true").lower() in ("true", "1", "yes"),
+            enable_scaled_exits=_get_env("SMART_EXIT_ENABLE_SCALED", default="true").lower() in ("true", "1", "yes"),
+            tier1_r_threshold=float(_get_env("SMART_EXIT_TIER1_R", default="1.0")),
+            tier2_r_threshold=float(_get_env("SMART_EXIT_TIER2_R", default="2.0")),
+        )
+
+
+@dataclass(frozen=True)
+class HedgingConfig:
+    """Cấu hình chiến lược quản lý vị thế 2 đầu (Strategic Zone Hedging)."""
+
+    allow_strategic_hedging: bool = field(default=True)       # Cho phép mở BUY & SELL nếu thỏa mãn điều kiện an toàn
+    min_hedging_distance_points: float = field(default=5.0)   # Khoảng cách tối thiểu giữa 2 lệnh ngược chiều (cấm lệch 1-2 giá)
+    require_breakeven_or_profit: bool = field(default=True)   # Lệnh cũ bắt buộc phải có lãi hoặc đã dời SL về BE
+    min_existing_profit_points: float = field(default=3.0)    # Lệnh cũ phải lãi tối thiểu X giá (ví dụ 3 giá = 30 pips)
+
+    @classmethod
+    def from_env(cls) -> "HedgingConfig":
+        return cls(
+            allow_strategic_hedging=_get_env("ALLOW_STRATEGIC_HEDGING", default="true").lower() in ("true", "1", "yes"),
+            min_hedging_distance_points=float(_get_env("MIN_HEDGING_DISTANCE_POINTS", default="5.0")),
+            require_breakeven_or_profit=_get_env("REQUIRE_BREAKEVEN_OR_PROFIT", default="true").lower() in ("true", "1", "yes"),
+            min_existing_profit_points=float(_get_env("MIN_EXISTING_PROFIT_POINTS", default="3.0")),
+        )
+
+
 # ──────────────────────────────────────────────
 # Factory function: tạo tất cả config một lần
 # ──────────────────────────────────────────────
@@ -201,6 +272,9 @@ class Settings:
     app: AppConfig
     openai: OpenAIConfig = field(default_factory=OpenAIConfig.from_env)
     news_auto: NewsAutoPostConfig = field(default_factory=NewsAutoPostConfig.from_env)
+    optimization: OptimizationConfig = field(default_factory=OptimizationConfig.from_env)
+    smart_exit: SmartExitConfig = field(default_factory=SmartExitConfig.from_env)
+    hedging: HedgingConfig = field(default_factory=HedgingConfig.from_env)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -212,6 +286,9 @@ class Settings:
             app=AppConfig.from_env(),
             openai=OpenAIConfig.from_env(),
             news_auto=NewsAutoPostConfig.from_env(),
+            optimization=OptimizationConfig.from_env(),
+            smart_exit=SmartExitConfig.from_env(),
+            hedging=HedgingConfig.from_env(),
         )
 
 

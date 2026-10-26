@@ -11,12 +11,23 @@ Cung cấp các thành phần phân tích chiến lược và sinh tín hiệu:
 - SignalEngine (Main Entry Point)
 """
 
-from app.strategy.signal_models import SignalDirection, SignalStatus, TradingSignal
-from app.strategy.setup_detector import SetupCandidate, SetupType, detect_setups
+from app.strategy.performance_evaluator import (
+    SetupPerformanceEvaluator,
+    SetupPerformanceMetrics,
+    SetupStatus,
+)
 from app.strategy.risk_filter import FilterConfig, FilterResult, apply_filters
+from app.strategy.setup_adapter import (
+    SETUP_SPECIFICATIONS,
+    SetupAdapterEngine,
+    SetupSpecification,
+    SetupValidationResult,
+)
+from app.strategy.setup_detector import SetupCandidate, SetupType, detect_setups
+from app.strategy.signal_engine import SignalEngine
+from app.strategy.signal_models import SignalDirection, SignalStatus, TradingSignal
 from app.strategy.signal_scoring import ScoreBreakdown, calculate_signal_score
 from app.strategy.signal_tracker import SignalTracker, TrackerConfig
-from app.strategy.signal_engine import SignalEngine
 
 __all__ = [
     "SignalDirection",
@@ -33,4 +44,11 @@ __all__ = [
     "SignalTracker",
     "TrackerConfig",
     "SignalEngine",
+    "SetupPerformanceEvaluator",
+    "SetupPerformanceMetrics",
+    "SetupStatus",
+    "SetupSpecification",
+    "SETUP_SPECIFICATIONS",
+    "SetupAdapterEngine",
+    "SetupValidationResult",
 ]

@@ -185,3 +185,35 @@ class TestSetupDetector:
         rsi_candidates = [c for c in candidates if c.setup_type == SetupType.RSI_DIVERGENCE]
         assert len(rsi_candidates) >= 1
         assert rsi_candidates[0].direction == "BUY"
+
+    def test_detect_predictive_limit_setup(self):
+        """Kiểm tra phát hiện Kế hoạch Dự đoán Từ xa (PREDICTIVE_LIMIT) khi có vùng hỗ trợ/kháng cự cách xa."""
+        from app.market.market_structure import SRZone
+        df = _create_mock_df(n_bars=30, base_price=4015.0)
+        df.loc[df.index[-1], "close"] = 4015.0
+        df.loc[df.index[-1], "rsi_14"] = 52.0
+        df.loc[df.index[-1], "atr_14"] = 3.0
+
+        # Vùng hỗ trợ cách giá hiện tại 15 giá (4000.0)
+        sup_zone = SRZone(price=4000.0, zone_type="SUPPORT", strength=3)
+        struct = MarketStructureResult(
+            swings=[SwingPoint(index=15, price=4000.0, swing_type=SwingType.SWING_LOW)],
+            trend=TrendDirection.BULLISH,
+            sr_zones=[sup_zone],
+        )
+
+        candidates = detect_setups(
+            df=df,
+            structure=struct,
+            higher_tf_trend=TrendDirection.BULLISH,
+            atr_value=3.0,
+        )
+
+        limit_cands = [c for c in candidates if c.setup_type == SetupType.PREDICTIVE_LIMIT]
+        assert len(limit_cands) >= 1
+        limit_cand = limit_cands[0]
+        assert limit_cand.direction == "BUY"
+        assert limit_cand.entry_price == 4000.0
+        assert limit_cand.risk_reward >= 1.5
+        assert any("DỰ ĐOÁN TỪ XA" in r for r in limit_cand.reasons)
+

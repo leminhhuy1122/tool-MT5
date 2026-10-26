@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Activity,
   ArrowDownRight,
   ArrowUpRight,
+  BrainCircuit,
+  Clock,
   Crosshair,
   ExternalLink,
   Flame,
@@ -44,6 +45,28 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
   const [latestOutcome, setLatestOutcome] = useState<LatestOutcome | null>(null);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [broadcastResult, setBroadcastResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // Theo dõi tiến trình chu kỳ nến M5 (300 giây) cho Vòng Tròn Suy Nghĩ AI Thinking
+  const [m5Elapsed, setM5Elapsed] = useState<number>(0);
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const currentSeconds = now.getSeconds();
+      const currentMinutes = now.getMinutes();
+      const elapsedInM5 = (currentMinutes % 5) * 60 + currentSeconds;
+      setM5Elapsed(elapsedInM5);
+    };
+
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const remainingM5Sec = Math.max(0, 300 - m5Elapsed);
+  const remainingM = Math.floor(remainingM5Sec / 60);
+  const remainingS = remainingM5Sec % 60;
+  const m5Pct = Math.min(100, Math.round((m5Elapsed / 300) * 100));
 
   // Tải thông tin lệnh vừa đóng gần nhất
   const fetchLatestOutcome = async () => {
@@ -100,12 +123,14 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
       className="card"
       id="live-open-positions-widget"
       style={{
-        marginBottom: '20px',
+        marginBottom: '12px',
         border: '1px solid rgba(245, 158, 11, 0.25)',
         background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.85) 100%)',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
         position: 'relative',
         overflow: 'hidden',
+        padding: '12px 16px',
+        borderRadius: '10px',
       }}
     >
       {/* Decorative ambient glow */}
@@ -135,29 +160,26 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
           gap: '10px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              width: '32px',
-              height: '32px',
-              borderRadius: '8px',
+              width: '26px',
+              height: '26px',
+              borderRadius: '6px',
               backgroundColor: 'rgba(245, 158, 11, 0.15)',
               border: '1px solid rgba(245, 158, 11, 0.3)',
               color: 'var(--color-accent-gold)',
             }}
           >
-            <Zap size={18} />
+            <Zap size={14} />
           </div>
           <div>
-            <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#F8FAFC', letterSpacing: '0.3px', margin: 0 }}>
-              Vị Thế Đang Khớp Lệnh & Lời Lỗ Thả Nổi (Live Floating PnL)
+            <h3 style={{ fontSize: '13px', fontWeight: 800, color: '#F8FAFC', letterSpacing: '0.2px', margin: 0 }}>
+              Vị Thế Đang Khớp Lệnh & PnL Thả Nổi (Live Floating PnL)
             </h3>
-            <p style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px', margin: 0 }}>
-              Bám sát thời gian thực giá nến MT5 • Tính toán số Pip và Giá lời/lỗ tức thì
-            </p>
           </div>
         </div>
 
@@ -242,6 +264,192 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
 
         {openPositions.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* VÒNG TRÒN SUY NGHĨ (AI THINKING RADAR CIRCLE) - NỔI BẬT & THUYẾT PHỤC */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '20px',
+                padding: '16px 20px',
+                borderRadius: '12px',
+                background: 'radial-gradient(ellipse at left, rgba(56, 189, 248, 0.12) 0%, rgba(15, 23, 42, 0.95) 70%)',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)',
+                position: 'relative',
+                overflow: 'hidden',
+                flexWrap: 'wrap',
+              }}
+            >
+              {/* Left: Vòng Tròn Suy Nghĩ Thinking (Animated Radar Circle) */}
+              <div
+                style={{
+                  flex: '0 0 auto',
+                  position: 'relative',
+                  width: '120px',
+                  height: '120px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {/* Vành xoay nét đứt ngoài cùng */}
+                <div
+                  className="animate-spin"
+                  style={{
+                    position: 'absolute',
+                    inset: '2px',
+                    borderRadius: '50%',
+                    border: '2px dashed rgba(56, 189, 248, 0.55)',
+                    pointerEvents: 'none',
+                  }}
+                />
+
+                {/* Vành xoay đảo chiều nhẹ bên trong */}
+                <div
+                  className="animate-spin-reverse"
+                  style={{
+                    position: 'absolute',
+                    inset: '9px',
+                    borderRadius: '50%',
+                    border: '1px dotted rgba(245, 158, 11, 0.45)',
+                    pointerEvents: 'none',
+                  }}
+                />
+
+                {/* Vòng tròn trung tâm phát sáng hiệu ứng thở */}
+                <div
+                  className="animate-breath"
+                  style={{
+                    width: '88px',
+                    height: '88px',
+                    borderRadius: '50%',
+                    background: 'radial-gradient(circle, rgba(56, 189, 248, 0.28) 0%, rgba(15, 23, 42, 0.95) 75%)',
+                    border: '2px solid #38BDF8',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    textAlign: 'center',
+                    padding: '6px',
+                    position: 'relative',
+                  }}
+                >
+                  <BrainCircuit size={26} color="#38BDF8" className="animate-pulse" />
+                  <span
+                    style={{
+                      fontSize: '9px',
+                      fontWeight: 900,
+                      color: '#38BDF8',
+                      letterSpacing: '0.8px',
+                      marginTop: '3px',
+                      lineHeight: 1,
+                    }}
+                  >
+                    THINKING
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      fontFamily: 'monospace',
+                      fontWeight: 800,
+                      color: '#F1F5F9',
+                      marginTop: '2px',
+                    }}
+                  >
+                    {remainingM}:{remainingS < 10 ? '0' : ''}{remainingS}
+                  </span>
+                </div>
+              </div>
+
+              {/* Right: Trạng thái & Diễn giải Bộ Não AI đang suy nghĩ */}
+              <div style={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span
+                      style={{
+                        padding: '3px 8px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        backgroundColor: 'rgba(56, 189, 248, 0.18)',
+                        border: '1px solid rgba(56, 189, 248, 0.4)',
+                        color: '#38BDF8',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                      }}
+                    >
+                      <span className="live-dot pulse" style={{ width: '6px', height: '6px', backgroundColor: '#38BDF8' }} />
+                      AI ĐANG SUY NGHĨ & QUÉT NẾN M5
+                    </span>
+                    <span
+                      style={{
+                        padding: '3px 8px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                        border: '1px solid rgba(245, 158, 11, 0.35)',
+                        color: '#F59E0B',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      <Clock size={12} /> KIÊN NHẪN QUAN SÁT
+                    </span>
+                  </div>
+
+                  <span style={{ fontSize: '11px', color: '#94A3B8', fontFamily: 'monospace' }}>
+                    Đóng nến sau: <strong style={{ color: '#F8FAFC' }}>{remainingM}m {remainingS}s</strong>
+                  </span>
+                </div>
+
+                {/* Thanh Tiến trình nến M5 (M5 Candle Formation Progress) */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#94A3B8', marginBottom: '3px' }}>
+                    <span>Chu kỳ nến M5 hiện tại ({m5Pct}% hoàn thành)</span>
+                    <span style={{ color: '#38BDF8', fontWeight: 600 }}>Tần suất quét tick: 1.0s / lần</span>
+                  </div>
+                  <div
+                    style={{
+                      width: '100%',
+                      height: '6px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                      borderRadius: '9999px',
+                      overflow: 'hidden',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${m5Pct}%`,
+                        background: 'linear-gradient(90deg, #38BDF8 0%, #10B981 100%)',
+                        borderRadius: '9999px',
+                        transition: 'width 0.5s ease',
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Diễn giải lý do AI đang chờ & nguyên tắc an toàn */}
+                <div
+                  style={{
+                    fontSize: '11.5px',
+                    color: '#CBD5E1',
+                    lineHeight: 1.5,
+                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                    padding: '7px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid rgba(255, 255, 255, 0.05)',
+                  }}
+                >
+                  💡 <strong>Nguyên tắc giao dịch:</strong> Chưa có vị thế đang chạy. AI đang kiên nhẫn đợi nến M5 đóng để xác nhận tín hiệu hợp chuẩn Đa Khung (H4-H1-M15). Tuyệt đối không vào lệnh khi thị trường đi ngang hoặc Buy/Sell xung đột gần nhau.
+                </div>
+              </div>
+            </div>
+
             {/* Lệnh Vừa Khớp & Đóng Gần Nhất (Recent Outcome) */}
             {latestOutcome && latestOutcome.hasData && (
               <div
@@ -249,10 +457,10 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                   backgroundColor: 'rgba(15, 23, 42, 0.85)',
                   borderRadius: '10px',
                   border: `1px solid ${latestOutcome.isWin ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
-                  padding: '16px 20px',
+                  padding: '14px 18px',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '12px',
+                  gap: '10px',
                   position: 'relative',
                   overflow: 'hidden',
                 }}
@@ -271,7 +479,7 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                     >
                       {latestOutcome.direction}
                     </span>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#F1F5F9' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#F1F5F9' }}>
                       Lệnh Vừa Khớp Gần Nhất [#{latestOutcome.signalId}]
                     </span>
                     <span
@@ -295,9 +503,9 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '6px',
-                      padding: '6px 14px',
+                      padding: '5px 12px',
                       borderRadius: '6px',
-                      fontSize: '12px',
+                      fontSize: '11px',
                       fontWeight: 700,
                       backgroundColor: 'rgba(245, 158, 11, 0.18)',
                       border: '1px solid rgba(245, 158, 11, 0.4)',
@@ -306,23 +514,23 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                       transition: 'all 0.2s',
                     }}
                   >
-                    <Send size={13} />
+                    <Send size={12} />
                     {isBroadcasting ? 'Đang gửi Tele...' : '📢 Báo Cáo Lệnh Này Lên Tele'}
                   </button>
                 </div>
 
                 {/* Chi tiết Giá và PnL Pips */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
-                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '8px 12px', borderRadius: '6px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px' }}>
+                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '6px 10px', borderRadius: '6px' }}>
                     <div style={{ fontSize: '10px', color: '#94A3B8' }}>Khớp Entry</div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', color: '#F1F5F9', marginTop: '2px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'monospace', color: '#F1F5F9', marginTop: '2px' }}>
                       ${latestOutcome.entryPrice?.toFixed(2)}
                     </div>
                   </div>
 
-                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '8px 12px', borderRadius: '6px' }}>
+                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '6px 10px', borderRadius: '6px' }}>
                     <div style={{ fontSize: '10px', color: '#94A3B8' }}>Giá Đóng (Exit)</div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', color: '#F1F5F9', marginTop: '2px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'monospace', color: '#F1F5F9', marginTop: '2px' }}>
                       ${latestOutcome.exitPrice?.toFixed(2)}
                     </div>
                   </div>
@@ -330,7 +538,7 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                   <div
                     style={{
                       backgroundColor: latestOutcome.isWin ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-                      padding: '8px 12px',
+                      padding: '6px 10px',
                       borderRadius: '6px',
                       border: `1px solid ${latestOutcome.isWin ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
                     }}
@@ -340,7 +548,7 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                     </div>
                     <div
                       style={{
-                        fontSize: '14px',
+                        fontSize: '13px',
                         fontWeight: 800,
                         fontFamily: 'monospace',
                         color: latestOutcome.isWin ? '#10B981' : '#EF4444',
@@ -355,33 +563,15 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                     </div>
                   </div>
 
-                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '8px 12px', borderRadius: '6px' }}>
+                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '6px 10px', borderRadius: '6px' }}>
                     <div style={{ fontSize: '10px', color: '#94A3B8' }}>Quy đổi 0.1 Lot</div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', color: latestOutcome.isWin ? '#10B981' : '#EF4444', marginTop: '2px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'monospace', color: latestOutcome.isWin ? '#10B981' : '#EF4444', marginTop: '2px' }}>
                       {latestOutcome.pnlPips && latestOutcome.pnlPips > 0 ? `+$${(latestOutcome.pnlPips * 1.0).toFixed(1)}` : `-$${Math.abs((latestOutcome.pnlPips || 0) * 1.0).toFixed(1)}`}
                     </div>
                   </div>
                 </div>
               </div>
             )}
-
-            <div
-              style={{
-                padding: '20px 16px',
-                textAlign: 'center',
-                backgroundColor: 'rgba(15, 23, 42, 0.6)',
-                borderRadius: '8px',
-                border: '1px dashed rgba(255, 255, 255, 0.1)',
-              }}
-            >
-              <Activity size={24} style={{ color: '#64748B', margin: '0 auto 8px auto', display: 'block' }} />
-              <div style={{ fontSize: '13px', fontWeight: 600, color: '#CBD5E1' }}>
-                Hiện tại chưa có vị thế nào đang mở
-              </div>
-              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '4px' }}>
-                Bot đang liên tục quét nến M5 và các khung lớn H1/H4. Khi có setup Order Block hoặc FVG hợp lệ, lệnh sẽ xuất hiện tại đây.
-              </div>
-            </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -561,10 +751,24 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                           ({isProfit ? `+${pnlPoints.toFixed(2)}` : pnlPoints.toFixed(2)} giá)
                         </span>
                       </div>
-                      <div style={{ fontSize: '11px', color: isProfit ? '#34D399' : '#F87171', marginTop: '2px' }}>
-                        {isProfit
-                          ? `✓ Đang có lãi (+${(pnlPoints * 100).toFixed(0)}$ trên 1 lot tiêu chuẩn)`
-                          : `⚠️ Đang âm (${(pnlPoints * 100).toFixed(0)}$ trên 1 lot tiêu chuẩn)`}
+                      <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span
+                          style={{
+                            fontSize: '12px',
+                            fontWeight: 800,
+                            padding: '3px 9px',
+                            borderRadius: '6px',
+                            backgroundColor: isProfit ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                            color: isProfit ? '#10B981' : '#F87171',
+                            border: `1px solid ${isProfit ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
+                            fontFamily: 'monospace',
+                          }}
+                        >
+                          💼 Ví Ảo (0.01 lot): {isProfit ? `Đang lời +$${(pnlPoints * 1.0).toFixed(2)} USD (+${(pnlPoints * 1.0).toFixed(2)} U)` : `Đang âm -$${Math.abs(pnlPoints * 1.0).toFixed(2)} USD (-${Math.abs(pnlPoints * 1.0).toFixed(2)} U)`}
+                        </span>
+                        <span style={{ fontSize: '11px', color: '#94A3B8' }}>
+                          (Chuẩn hợp đồng XAUUSD: 1 giá = 1.00 U)
+                        </span>
                       </div>
                     </div>
 

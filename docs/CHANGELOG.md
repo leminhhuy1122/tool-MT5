@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [2.1.0] - 2026-10-26
+
+### Smart Trading Terminal UI & Adaptive Profit Protection Upgrade
+- **Bảo Vệ Lợi Nhuận & Quản Trị Thoát Lệnh Thông Minh (`app/strategy/smart_exit.py`):**
+  - Tự động dời SL hòa vốn (Breakeven) khi lệnh xanh +5 giá (+50 pips).
+  - Kích hoạt Trailing Stop từng bước khóa lợi nhuận khi lãi +8 giá (+80 pips).
+  - Cảnh báo thoát lệnh sớm (Early Exit Alert) khi nến M5 vi phạm cấu trúc Order Block.
+  - Áp dụng nguyên tắc an toàn: Tuyệt đối không vào lệnh BUY và SELL tại cùng 1 điểm giá hoặc lệch nhau 1-2 giá.
+- **AI Companion & Telegram Trợ Lý Giao Dịch (`app/strategy/ai_companion.py`):**
+  - Tự động gửi tin nhắn trò chuyện, khuyên dời SL, gồng lãi hoặc cắt lệnh thông minh như bot AI đồng hành.
+  - Chức năng Báo Cáo Lệnh Vừa Khớp Lên Telegram (`/api/v1/telegram/broadcast-last-outcome`) tổng kết PnL Pips, điểm chốt lời/cắt lỗ.
+- **Giám Sát Hệ Thống & Tìm Lỗi Toàn Diện (`frontend/src/components/views/SystemMonitoringView.tsx`):**
+  - Màn hình chuyên dụng giám sát sức khỏe bot, tài nguyên CPU/RAM, độ trễ IPC MT5 (1ms), SQLite WAL mode, và xem log trực tiếp.
+- **Ví Đầu Tư Ảo 0.01 Lot (`frontend/src/components/views/PaperWalletView.tsx`):**
+  - Tự động khớp lệnh mô phỏng tài khoản $50 (0.01 lot) và hiển thị trực tiếp tiền lời/lỗ ($ U) thời gian thực.
+- **Tối Ưu Hóa & Tinh Gọn Giao Diện Người Dùng (UI/UX Refinement):**
+  - Loại bỏ thanh menu dư thừa trên cùng (`Topbar.tsx`), giữ không gian màn hình thoáng đãng.
+  - Vòng tròn giá vàng trung tâm (`MarketTickerHero.tsx`) bo tròn, viền vàng ánh kim neon phát sáng nổi bật ở chính giữa.
+  - Vòng tròn suy nghĩ Thinking (`LiveOpenPositions.tsx`) hoạt họa radar AI quét nến M5 kèm đồng hồ đếm ngược nhịp tim.
+  - Bảng Tín Hiệu & Lệnh (`LatestSignals.tsx`) tinh gọn từ 10 cột rườm rà xuống 5 cột rành mạch, hỗ trợ nhấn chuột vào bất kỳ vị trí nào trên dòng lệnh để mở popup phân tích chi tiết SMC & Order Block.
+
+---
+
+## [2.0.0] - 2026-10-26
+
+### VietKey Gold AI — Trading Intelligence & Self-Learning Upgrade (Phases 1 - 11)
+
+Toàn bộ 11 giai đoạn nâng cấp định lượng và học máy tự thích ứng đã hoàn thành và được kiểm thử toàn diện:
+
+- **Phase 1: Quantitative Audit & Baselining**:
+  - Khảo sát mã nguồn, đo lường độ trễ, thiết lập baseline kiến trúc và bảo vệ nghiêm ngặt tiêu chuẩn mã hóa UTF-8 tiếng Việt.
+- **Phase 2: Signal Conflict Resolution & Setup Lifecycle**:
+  - `app/strategy/conflict_resolver.py`: Phân xử xung đột BUY/SELL cùng nến theo xu hướng H4 và cấp bậc ưu tiên setup.
+  - `app/strategy/signal_tracker.py`: Quản lý chu kỳ sống `SetupLifecycleStatus` (DISCOVERED, VALIDATED, ACTIVE, APPROACHING, ENTRY_REACHED, INVALIDATED, EXPIRED, CANCELLED, COMPLETED).
+- **Phase 3: Market Regime Detection Engine**:
+  - `app/market/regime.py`: Nhận diện 5 trạng thái thị trường định lượng (TRENDING_BULLISH, TRENDING_BEARISH, RANGING, HIGH_VOLATILITY_EXPANSION, COMPRESSION_SQUEEZE) dựa trên ADX, DI+/DI-, ATR percentile và Bollinger Band width.
+- **Phase 4: Dynamic Confluence & Weight Scoring**:
+  - `app/strategy/signal_scoring.py`: Chuyển đổi mô hình tính điểm sang chấm điểm trọng số động theo từng Regime thị trường (tổng trọng số chuẩn hóa 1.0, minh bạch minh họa chi tiết breakdown).
+- **Phase 5: Setup Performance Memory & Decay**:
+  - `app/strategy/performance_evaluator.py`: Đo lường sâu PnL, Win Rate, Profit Factor, Expectancy R, MFE/MAE trung bình theo từng Setup Type với trọng số phân rã theo thời gian (exponential time decay).
+- **Phase 6: Multi-Horizon ML Prediction**:
+  - `app/ml/features.py`: Trích xuất 21 đặc trưng định lượng gồm momentum ratios, cost/spread volatility, session liquidity score, volume surge.
+  - `app/ml/filter.py`: Phân loại chất lượng tín hiệu qua Machine Learning kết hợp fallback quy tắc truyền thống an toàn.
+- **Phase 7: Walk-Forward Evaluation & Model Versioning**:
+  - `app/ml/walk_forward.py`: Thẩm định Out-of-Sample Walk-Forward với Expanding Window chống Look-ahead Bias và Data Leakage.
+  - `app/ml/registry.py`: Đăng ký, kiểm duyệt tiêu chuẩn sản xuất (Promotion Rules) và cơ chế Rollback tự động.
+- **Phase 8: Advanced Self-Learning from Closed Trade Feedback**:
+  - `app/strategy/feedback_learner.py`: Bộ phân tích nguyên nhân đóng lệnh `TradeOutcomeAnalyzer` (RootCause: SPREAD_WIDENING, NEWS_SPIKE, STRUCTURAL_FAILURE, NORMAL_LOSS, LIQUIDITY_REVERSAL, MOMENTUM_SURGE, CLEAN_TREND_RUN).
+  - Tự động cộng/trừ điểm thưởng/phạt và tự động nới rộng hệ số đệm SL (`cushion_multiplier = 1.15`) khi phát hiện broker giãn spread.
+- **Phase 9: Setup Adaptation & Specialization Engine**:
+  - `app/strategy/setup_adapter.py`: Chuẩn hóa 7 setup lõi (`SetupSpecification`) và động cơ `SetupAdapterEngine` tự động thích ứng thông số SL cushion, min R:R, filter requirement theo từng regime cụ thể.
+- **Phase 10: Resource Optimization & Stability Shield**:
+  - `app/system/resource_optimizer.py`: `ProcessSingletonGuard` (ngăn xung đột đa tiến trình), `BoundedDataCache` (LRU cache kiểm soát RAM), `ResourceProfiler` (đo lường benchmark latency, bộ nhớ).
+  - Tối ưu hóa truy vấn nến MT5 chỉ khi có nến mới hình thành (`check_new_candle`), tối ưu kết nối SQLite với WAL mode và batch queries.
+- **Phase 11: Comprehensive Verification Suite**:
+  - `tests/test_phase11_comprehensive_verification.py`: Bộ kiểm thử hợp nhất 20 kịch bản định lượng bắt buộc (Conflict, Duplicate, Expiry, Invalidation, Regime, Feature Snapshot, Outcome, R-Multiple, MFE/MAE, Data Leakage, Chronological Split, Aggregation, ML Evaluation, Versioning, Promotion, Rollback, Missing Data, Stale Candles, Spread Spike, Unknown Regime).
+  - Toàn bộ test suite đạt **436/436 tests passed** (100%), frontend biên dịch hoàn hảo.
+
+---
+
 ## [1.2.0] - 2026-10-25
 
 ### Economic Calendar & News Blackout Shield Engine

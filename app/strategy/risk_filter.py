@@ -11,12 +11,15 @@ Lọc tín hiệu trước khi phát:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from app.strategy.setup_detector import SetupCandidate
 from app.market.market_structure import TrendDirection
 from app.market.volatility import VolatilityResult, VolatilityLevel
 from logger import get_logger
+
+if TYPE_CHECKING:
+    from app.market.regime import MarketRegimeResult
 
 log = get_logger("strategy.filter")
 
@@ -49,6 +52,7 @@ def apply_filters(
     higher_tf_trend: TrendDirection = TrendDirection.NEUTRAL,
     volatility: Optional[VolatilityResult] = None,
     config: Optional[FilterConfig] = None,
+    regime: Optional["MarketRegimeResult"] = None,
 ) -> FilterResult:
     """
     Áp dụng bộ lọc cho setup candidate.
@@ -58,6 +62,7 @@ def apply_filters(
         higher_tf_trend: Trend H4.
         volatility: Kết quả volatility analysis.
         config: Cấu hình bộ lọc.
+        regime: Kết quả phân tích Market Regime (tùy chọn).
 
     Returns:
         FilterResult cho biết candidate pass hay reject.
@@ -67,6 +72,15 @@ def apply_filters(
 
     rejected: list[str] = []
     passed: list[str] = []
+
+    # 0. Regime Setup Compatibility Filter
+    if regime is not None:
+        if not regime.is_setup_allowed(candidate.setup_type):
+            rejected.append(
+                f"Setup {candidate.setup_type.value} không được phép trong chế độ thị trường {regime.regime.value}"
+            )
+        else:
+            passed.append(f"Regime {regime.regime.value} tương thích")
 
     # 1. R:R Filter
     rr = candidate.risk_reward

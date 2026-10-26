@@ -18,11 +18,15 @@ from app.telegram.client import TelegramClient, TelegramResponse
 from app.telegram.formatter import (
     format_custom_announcement,
     format_early_exit_alert,
+    format_momentum_exhaustion_alert,
     format_news_broadcast,
+    format_scaled_exit_alert,
     format_signal_message,
     format_signal_update,
     format_system_notification,
+    format_time_stagnation_alert,
     format_trade_outcome_summary,
+    format_trailing_stop_update,
 )
 from config import TelegramConfig
 from logger import get_logger
@@ -77,6 +81,13 @@ class TelegramNotifier:
         """Tạo định danh duy nhất cho một lần phát tín hiệu/cập nhật."""
         return f"{signal_id}_{status.value}"
 
+    def _record_sent_key(self, key: str) -> None:
+        """Lưu key đã gửi và giới hạn bộ nhớ tối đa 2000 keys tránh rò rỉ RAM."""
+        if len(self._sent_keys) >= 2000:
+            survivors = list(self._sent_keys)[1000:]
+            self._sent_keys = set(survivors)
+        self._sent_keys.add(key)
+
     def is_already_sent(self, signal_id: str, status: SignalStatus) -> bool:
         """Kiểm tra thông báo này đã được gửi trước đó hay chưa."""
         return self._make_key(signal_id, status) in self._sent_keys
@@ -112,7 +123,7 @@ class TelegramNotifier:
         resp: TelegramResponse = self.client.send_message(text)
 
         if resp.ok:
-            self._sent_keys.add(key)
+            self._record_sent_key(key)
             self.total_sent += 1
             log.info("✓ Đã gửi tin nhắn tín hiệu [%s] %s tới Telegram.",
                      signal.signal_id, signal.direction.value)
@@ -155,7 +166,7 @@ class TelegramNotifier:
         resp: TelegramResponse = self.client.send_message(text)
 
         if resp.ok:
-            self._sent_keys.add(key)
+            self._record_sent_key(key)
             self.total_sent += 1
             log.info("✓ Đã gửi cập nhật trạng thái %s [%s] tới Telegram.",
                      signal.status.value, signal.signal_id)
@@ -204,13 +215,164 @@ class TelegramNotifier:
         resp: TelegramResponse = self.client.send_message(text)
 
         if resp.ok:
-            self._sent_keys.add(key)
+            self._record_sent_key(key)
             self.total_sent += 1
             log.info("✓ Đã gửi cảnh báo thoát lệnh sớm [%s] tới Telegram.", signal.signal_id)
             return True
         else:
             self.total_failed += 1
             log.error("✗ Gửi cảnh báo thoát lệnh sớm [%s] thất bại: %s", signal.signal_id, resp.description)
+            return False
+
+    def send_momentum_exhaustion_alert(
+        self,
+        signal: TradingSignal,
+        current_price: float,
+        pnl_points: float,
+        exhaustion_reason: str,
+        candle_time_str: str = "",
+    ) -> bool:
+        """
+        Gửi cảnh báo động lượng suy yếu / nến từ chối (Rejection Wick) khi lệnh đang có lãi.
+        Khuyến nghị chốt lời chủ động 50-70%.
+        """
+        if not self.is_enabled:
+            return False
+
+        key = f"{signal.signal_id}_EXHAUSTION_{candle_time_str}"
+        if key in self._sent_keys:
+            return True
+
+        text = format_momentum_exhaustion_alert(
+            signal=signal,
+            current_price=current_price,
+            pnl_points=pnl_points,
+            exhaustion_reason=exhaustion_reason,
+        )
+        resp: TelegramResponse = self.client.send_message(text)
+
+        if resp.ok:
+            self._record_sent_key(key)
+            self.total_sent += 1
+            log.info("✓ Đã gửi cảnh báo động lượng suy yếu [%s] tới Telegram.", signal.signal_id)
+            return True
+        else:
+            self.total_failed += 1
+            log.error("✗ Gửi cảnh báo động lượng suy yếu [%s] thất bại: %s", signal.signal_id, resp.description)
+            return False
+
+    def send_time_stagnation_alert(
+        self,
+        signal: TradingSignal,
+        current_price: float,
+        pnl_points: float,
+        minutes_open: int,
+    ) -> bool:
+        """
+        Gửi cảnh báo lệnh ứ đọng (Time Decay) khi lệnh ngâm lâu mà không bứt phá tới TP.
+        """
+        if not self.is_enabled:
+            return False
+
+        key = f"{signal.signal_id}_STAGNATION"
+        if key in self._sent_keys:
+            return True
+
+        text = format_time_stagnation_alert(
+            signal=signal,
+            current_price=current_price,
+            pnl_points=pnl_points,
+            minutes_open=minutes_open,
+        )
+        resp: TelegramResponse = self.client.send_message(text)
+
+        if resp.ok:
+            self._record_sent_key(key)
+            self.total_sent += 1
+            log.info("✓ Đã gửi cảnh báo lệnh ứ đọng [%s] tới Telegram.", signal.signal_id)
+            return True
+        else:
+            self.total_failed += 1
+            log.error("✗ Gửi cảnh báo lệnh ứ đọng [%s] thất bại: %s", signal.signal_id, resp.description)
+            return False
+
+    def send_trailing_stop_update(
+        self,
+        signal: TradingSignal,
+        current_price: float,
+        old_sl: float,
+        new_sl: float,
+        locked_points: float,
+    ) -> bool:
+        """
+        Gửi thông báo nâng Stop Loss tự động (Trailing Stop / Breakeven) bảo vệ lợi nhuận.
+        """
+        if not self.is_enabled:
+            return False
+
+        # Key định danh theo bước nâng SL (ví dụ: {id}_TRAIL_2740.5)
+        key = f"{signal.signal_id}_TRAIL_{new_sl:.1f}"
+        if key in self._sent_keys:
+            return True
+
+        text = format_trailing_stop_update(
+            signal=signal,
+            current_price=current_price,
+            old_sl=old_sl,
+            new_sl=new_sl,
+            locked_points=locked_points,
+        )
+        resp: TelegramResponse = self.client.send_message(text)
+
+        if resp.ok:
+            self._record_sent_key(key)
+            self.total_sent += 1
+            log.info("✓ Đã gửi thông báo Trailing Stop [%s] (SL: %.2f) tới Telegram.", signal.signal_id, new_sl)
+            return True
+        else:
+            self.total_failed += 1
+            log.error("✗ Gửi thông báo Trailing Stop [%s] thất bại: %s", signal.signal_id, resp.description)
+            return False
+
+    def send_scaled_exit_alert(
+        self,
+        signal: TradingSignal,
+        current_price: float,
+        tier_name: str,
+        close_ratio: float,
+        pnl_points: float,
+        pnl_r: float,
+        new_sl: Optional[float] = None,
+    ) -> bool:
+        """
+        Gửi khuyến nghị chốt lời từng phần (Tier 1: 50% / Tier 2: 30%) và bảo vệ phần còn lại.
+        """
+        if not self.is_enabled:
+            return False
+
+        key = f"{signal.signal_id}_SCALED_{tier_name}"
+        if key in self._sent_keys:
+            return True
+
+        text = format_scaled_exit_alert(
+            signal=signal,
+            current_price=current_price,
+            tier_name=tier_name,
+            close_ratio=close_ratio,
+            pnl_points=pnl_points,
+            pnl_r=pnl_r,
+            new_sl=new_sl,
+        )
+        resp: TelegramResponse = self.client.send_message(text)
+
+        if resp.ok:
+            self._record_sent_key(key)
+            self.total_sent += 1
+            log.info("✓ Đã gửi thông báo Scaled Exit [%s] (%s) tới Telegram.", signal.signal_id, tier_name)
+            return True
+        else:
+            self.total_failed += 1
+            log.error("✗ Gửi thông báo Scaled Exit [%s] thất bại: %s", signal.signal_id, resp.description)
             return False
 
     def send_system_event(self, event_type: str, message: str) -> bool:
@@ -373,7 +535,7 @@ class TelegramNotifier:
         resp: TelegramResponse = self.client.send_message(text)
 
         if resp.ok:
-            self._sent_keys.add(key)
+            self._record_sent_key(key)
             self.total_sent += 1
             log.info("✓ Đã gửi thông báo tổng hợp kết quả lệnh [%s] (PnL: %.2f pts) tới Telegram.",
                      sig_id, pnl_points)

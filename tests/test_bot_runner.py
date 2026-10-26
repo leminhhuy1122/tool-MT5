@@ -29,6 +29,7 @@ def mock_runner():
         connector=mock_connector,
         notifier=mock_notifier,
     )
+    runner.singleton_guard = None
     return runner
 
 

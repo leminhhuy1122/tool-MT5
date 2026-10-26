@@ -7,7 +7,12 @@ from app.ml.dataset import DatasetBuilder
 from app.ml.features import FEATURE_NAMES, FeatureExtractor
 from app.ml.filter import MLSignalFilter
 from app.ml.model import ModelMetrics, SignalQualityClassifier
-from app.ml.registry import ModelRegistry
+from app.ml.registry import ModelRegistry, ModelStatus
+from app.ml.walk_forward import (
+    MLFoldResult,
+    MLWalkForwardEvaluator,
+    MLWalkForwardReport,
+)
 
 __all__ = [
     "FEATURE_NAMES",
@@ -16,5 +21,9 @@ __all__ = [
     "SignalQualityClassifier",
     "ModelMetrics",
     "ModelRegistry",
+    "ModelStatus",
     "MLSignalFilter",
+    "MLFoldResult",
+    "MLWalkForwardReport",
+    "MLWalkForwardEvaluator",
 ]

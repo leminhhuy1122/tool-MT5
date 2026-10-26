@@ -8,7 +8,7 @@ Cung cấp các lớp truy xuất và thao tác dữ liệu (Data Access Layer /
 - StrategyRepository: Quản lý các phiên bản chiến lược.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 from typing import Optional
 
@@ -26,6 +26,23 @@ class SignalRepository:
 
     def __init__(self, db: DatabaseManager):
         self.db = db
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        """Đảm bảo bảng signals và signal_features có các cột mở rộng."""
+        try:
+            with self.db.session() as conn:
+                cursor = conn.execute("PRAGMA table_info(signals);")
+                s_cols = [r["name"] for r in cursor.fetchall()]
+                if s_cols and "market_regime" not in s_cols:
+                    conn.execute("ALTER TABLE signals ADD COLUMN market_regime TEXT DEFAULT 'UNKNOWN';")
+
+                cursor = conn.execute("PRAGMA table_info(signal_features);")
+                cols = [r["name"] for r in cursor.fetchall()]
+                if cols and "features_json" not in cols:
+                    conn.execute("ALTER TABLE signal_features ADD COLUMN features_json TEXT;")
+        except Exception as e:
+            log.debug("Kiểm tra cột signals/signal_features: %s", e)
 
     def save_signal(
         self,
@@ -50,6 +67,7 @@ class SignalRepository:
 
         expires_str = signal.expires_at.isoformat() if signal.expires_at else None
         reasons_json = json.dumps(signal.reasons, ensure_ascii=False)
+        regime_str = getattr(signal, "market_regime", "UNKNOWN") or "UNKNOWN"
 
         sql_signal = """
         INSERT OR REPLACE INTO signals (
@@ -57,8 +75,8 @@ class SignalRepository:
             entry_price, entry_zone_low, entry_zone_high, stop_loss,
             take_profit_1, take_profit_2, risk_reward_ratio, sl_distance,
             tp_distance, score, confidence, setup_type, reasons,
-            invalidation, trend_h4, trend_h1, created_at, expires_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            invalidation, trend_h4, trend_h1, market_regime, created_at, expires_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
 
         params = (
@@ -84,6 +102,7 @@ class SignalRepository:
             signal.invalidation,
             signal.trend_h4,
             signal.trend_h1,
+            regime_str,
             created_str,
             expires_str,
             created_str,
@@ -94,31 +113,79 @@ class SignalRepository:
 
             # Lưu features nếu có
             if features:
-                sql_feat = """
-                INSERT INTO signal_features (
-                    signal_id, rsi_14, ema_20, ema_50, ema_200, atr_14,
-                    spread, volatility_level, body_ratio, candle_range,
-                    swing_high, swing_low
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """
-                feat_params = (
-                    signal.signal_id,
-                    features.get("rsi_14"),
-                    features.get("ema_20"),
-                    features.get("ema_50"),
-                    features.get("ema_200"),
-                    features.get("atr_14"),
-                    features.get("spread"),
-                    features.get("volatility_level"),
-                    features.get("body_ratio"),
-                    features.get("candle_range"),
-                    features.get("swing_high"),
-                    features.get("swing_low"),
-                )
+                features_str = json.dumps(features, ensure_ascii=False)
+                has_json_col = False
+                try:
+                    cursor = conn.execute("PRAGMA table_info(signal_features);")
+                    cols = [r["name"] for r in cursor.fetchall()]
+                    has_json_col = "features_json" in cols
+                except Exception:
+                    pass
+
+                if has_json_col:
+                    sql_feat = """
+                    INSERT INTO signal_features (
+                        signal_id, rsi_14, ema_20, ema_50, ema_200, atr_14,
+                        spread, volatility_level, body_ratio, candle_range,
+                        swing_high, swing_low, features_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    """
+                    feat_params = (
+                        signal.signal_id,
+                        features.get("rsi_14"),
+                        features.get("ema_20"),
+                        features.get("ema_50"),
+                        features.get("ema_200"),
+                        features.get("atr_14"),
+                        features.get("spread"),
+                        features.get("volatility_level"),
+                        features.get("body_ratio"),
+                        features.get("candle_range"),
+                        features.get("swing_high"),
+                        features.get("swing_low"),
+                        features_str,
+                    )
+                else:
+                    sql_feat = """
+                    INSERT INTO signal_features (
+                        signal_id, rsi_14, ema_20, ema_50, ema_200, atr_14,
+                        spread, volatility_level, body_ratio, candle_range,
+                        swing_high, swing_low
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    """
+                    feat_params = (
+                        signal.signal_id,
+                        features.get("rsi_14"),
+                        features.get("ema_20"),
+                        features.get("ema_50"),
+                        features.get("ema_200"),
+                        features.get("atr_14"),
+                        features.get("spread"),
+                        features.get("volatility_level"),
+                        features.get("body_ratio"),
+                        features.get("candle_range"),
+                        features.get("swing_high"),
+                        features.get("swing_low"),
+                    )
                 conn.execute(sql_feat, feat_params)
 
         log.debug("Đã lưu tín hiệu [%s] vào database.", signal.signal_id)
         return True
+
+    def get_signal_features(self, signal_id: str) -> Optional[dict]:
+        """Lấy đặc trưng kỹ thuật đã lưu của một tín hiệu."""
+        sql = "SELECT * FROM signal_features WHERE signal_id = ? ORDER BY id DESC LIMIT 1;"
+        with self.db.session() as conn:
+            row = conn.execute(sql, (signal_id,)).fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            if data.get("features_json"):
+                try:
+                    data["full_features"] = json.loads(data["features_json"])
+                except Exception:
+                    pass
+            return data
 
     def update_status(
         self,
@@ -146,6 +213,26 @@ class SignalRepository:
 
         if updated:
             log.debug("Đã cập nhật trạng thái [%s] -> %s", signal_id, status.value)
+        return updated
+
+    def update_stop_loss(
+        self,
+        signal_id: str,
+        new_stop_loss: float,
+        updated_at: Optional[datetime] = None,
+    ) -> bool:
+        """
+        Cập nhật mức Stop Loss trong database (dời SL hòa vốn hoặc kích hoạt Trailing Stop).
+        """
+        now_str = (updated_at or datetime.now(timezone.utc)).isoformat()
+        sql = "UPDATE signals SET stop_loss = ?, updated_at = ? WHERE signal_id = ?;"
+
+        with self.db.session() as conn:
+            cursor = conn.execute(sql, (round(new_stop_loss, 2), now_str, signal_id))
+            updated = cursor.rowcount > 0
+
+        if updated:
+            log.info("✓ Đã cập nhật Stop Loss mới cho tín hiệu [%s] -> %.2f", signal_id, new_stop_loss)
         return updated
 
     def save_outcome(
@@ -224,12 +311,29 @@ class SignalRepository:
             return [dict(r) for r in rows]
 
     def get_recent_signals(self, limit: int = 50, symbol: Optional[str] = None) -> list[dict]:
-        """Lấy danh sách các tín hiệu gần nhất."""
+        """Lấy danh sách các tín hiệu gần nhất kèm thông tin kết quả outcome (nếu đã kết thúc)."""
         if symbol:
-            sql = "SELECT * FROM signals WHERE symbol = ? ORDER BY created_at DESC LIMIT ?;"
+            sql = """
+            SELECT s.*, 
+                   o.final_status, o.exit_price, o.pnl_points, o.pnl_r,
+                   o.duration_seconds, o.exit_time, o.created_at as outcome_time
+            FROM signals s
+            LEFT JOIN signal_outcomes o ON s.signal_id = o.signal_id
+            WHERE s.symbol = ? 
+            ORDER BY s.created_at DESC 
+            LIMIT ?;
+            """
             params = (symbol, limit)
         else:
-            sql = "SELECT * FROM signals ORDER BY created_at DESC LIMIT ?;"
+            sql = """
+            SELECT s.*, 
+                   o.final_status, o.exit_price, o.pnl_points, o.pnl_r,
+                   o.duration_seconds, o.exit_time, o.created_at as outcome_time
+            FROM signals s
+            LEFT JOIN signal_outcomes o ON s.signal_id = o.signal_id
+            ORDER BY s.created_at DESC 
+            LIMIT ?;
+            """
             params = (limit,)
 
         with self.db.session() as conn:
@@ -308,6 +412,62 @@ class SignalRepository:
                 "net_pips": net_pips,
                 "profit_factor": pf,
             }
+
+    def get_historical_outcomes(
+        self,
+        lookback_days: Optional[int] = None,
+        symbol: Optional[str] = None,
+    ) -> list[dict]:
+        """
+        Lấy danh sách các lệnh đã có kết quả outcome (JOIN giữa signals và signal_outcomes)
+        phục vụ theo dõi và đánh giá hiệu suất của từng setup.
+        """
+        clauses = []
+        params = []
+        if symbol:
+            clauses.append("s.symbol = ?")
+            params.append(symbol)
+        if lookback_days:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
+            clauses.append("s.created_at >= ?")
+            params.append(cutoff)
+
+        where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+        sql = f"""
+        SELECT 
+            s.signal_id, s.symbol, s.setup_type, s.direction, s.timeframe,
+            s.entry_price, s.stop_loss, s.take_profit_1, s.take_profit_2,
+            s.score, s.confidence, s.strategy_version, s.created_at,
+            s.market_regime,
+            o.final_status, o.entry_hit_price, o.exit_price,
+            o.pnl_points, o.pnl_r, o.duration_seconds,
+            o.max_favorable_excursion, o.max_adverse_excursion,
+            o.exit_time, o.notes
+        FROM signal_outcomes o
+        JOIN signals s ON o.signal_id = s.signal_id
+        {where_str}
+        ORDER BY s.created_at DESC;
+        """
+
+        with self.db.session() as conn:
+            cursor = conn.execute(sql, tuple(params))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_setup_performance_summary(
+        self,
+        lookback_days: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """
+        Tổng hợp hiệu suất theo từng loại setup từ bảng outcomes.
+        """
+        from app.strategy.performance_evaluator import SetupPerformanceEvaluator
+
+        evaluator = SetupPerformanceEvaluator(
+            repository=self,
+            lookback_days=lookback_days,
+        )
+        return {st: m.to_dict() for st, m in evaluator.refresh().items()}
 
 
 class MarketDataRepository:

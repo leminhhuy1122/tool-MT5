@@ -238,3 +238,26 @@ class TestTelegramFormatter:
         assert "#test_dict_01" in text
         assert "CHỐT LÃI (+200.0 PIPS)" in text
 
+    def test_format_predictive_limit_signal(self):
+        """Kiểm tra định dạng tin nhắn Telegram cho Kế hoạch Dự đoán Từ xa (PREDICTIVE_LIMIT)."""
+        from app.telegram.formatter import format_signal_message, format_signal_update
+        sig = _make_buy_signal()
+        sig.setup_type = "PREDICTIVE_LIMIT"
+        sig.entry_price = 4000.0
+        sig.entry_zone_low = 3999.2
+        sig.entry_zone_high = 4000.8
+        sig.reasons = ["🔮 DỰ ĐOÁN TỪ XA: Đón sóng tại Order Block [3998 - 4002]"]
+
+        msg = format_signal_message(sig)
+        assert "KẾ HOẠCH DỰ ĐOÁN ĐÓN SÓNG TỪ XA (BUY LIMIT)" in msg
+        assert "BUY LIMIT Gold @ <code>4000.0</code>" in msg
+        assert "3999.2 – 4000.8" in msg
+        assert "Chưa vào lệnh tại giá thị trường hiện tại" in msg
+
+        # Kiểm tra khi khớp Entry
+        sig.status = SignalStatus.ENTRY_REACHED
+        update_msg = format_signal_update(sig, price=4000.5)
+        assert "ĐÃ KHỚP KẾ HOẠCH DỰ ĐOÁN TỪ XA!" in update_msg
+        assert "3999.2 – 4000.8" in update_msg
+
+

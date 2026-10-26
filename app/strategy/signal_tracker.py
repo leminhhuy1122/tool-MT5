@@ -20,7 +20,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from app.strategy.signal_models import SignalDirection, SignalStatus, TradingSignal
+from app.market.market_structure import MarketStructureResult, TrendDirection
+from app.strategy.conflict_resolver import ConflictConfig, ConflictDecision, ConflictResolver
+from app.strategy.setup_detector import SetupCandidate
+from app.strategy.signal_models import SetupLifecycleStatus, SignalDirection, SignalStatus, TradingSignal
 from logger import get_logger
 
 log = get_logger("strategy.tracker")
@@ -28,20 +31,27 @@ log = get_logger("strategy.tracker")
 
 @dataclass
 class TrackerConfig:
-    """Cấu hình cho Signal Tracker."""
-    cooldown_minutes: int = 60          # Thời gian tối thiểu giữa 2 tín hiệu cùng hướng
-    max_active_signals: int = 3         # Tối đa số tín hiệu active đồng thời
-    default_expiry_hours: int = 12      # Thời gian hết hạn mặc định (giờ)
+    """Cấu hình cho Signal Tracker & Lifecycle Controller."""
+    cooldown_minutes: int = 60             # Thời gian tối thiểu giữa 2 tín hiệu (phút)
+    max_active_signals: int = 1            # Tối đa số tín hiệu active đồng thời trên 1 symbol
+    default_expiry_hours: int = 4          # Thời gian hết hạn mặc định (giờ)
+    approaching_distance_pts: float = 1.5  # Khoảng cách (giá) để chuyển sang trạng thái APPROACHING
 
 
 class SignalTracker:
     """
-    Theo dõi và cập nhật trạng thái các tín hiệu giao dịch.
+    Theo dõi và cập nhật trạng thái chu kỳ sống (Lifecycle) của các tín hiệu giao dịch.
     """
 
     def __init__(self, config: Optional[TrackerConfig] = None):
         self.config = config or TrackerConfig()
         self._signals: dict[str, TradingSignal] = {}
+        self.conflict_resolver = ConflictResolver(
+            ConflictConfig(
+                cooldown_minutes=self.config.cooldown_minutes,
+                max_active_per_symbol=self.config.max_active_signals,
+            )
+        )
 
     @property
     def all_signals(self) -> list[TradingSignal]:
@@ -50,7 +60,7 @@ class SignalTracker:
 
     @property
     def active_signals(self) -> list[TradingSignal]:
-        """Các tín hiệu đang ACTIVE hoặc ENTRY_REACHED."""
+        """Các tín hiệu đang ACTIVE, APPROACHING hoặc ENTRY_REACHED."""
         return [s for s in self._signals.values() if s.is_active]
 
     def load_active_signals(self, signals: list[TradingSignal]) -> None:
@@ -70,26 +80,20 @@ class SignalTracker:
     ) -> bool:
         """
         Kiểm tra xem có tín hiệu trùng lặp đang hoạt động hoặc trong cooldown không.
-
-        Args:
-            symbol: Mã giao dịch (e.g. XAUUSD).
-            direction: BUY hoặc SELL.
-            check_time: Thời điểm kiểm tra (mặc định hiện tại UTC).
-
-        Returns:
-            True nếu bị xem là trùng lặp (không nên phát thêm).
         """
         if direction == SignalDirection.WAIT:
             return False
 
         if check_time is None:
             check_time = datetime.now(timezone.utc)
+        elif check_time.tzinfo is None:
+            check_time = check_time.replace(tzinfo=timezone.utc)
 
         # 1. Kiểm tra số lượng active signals
         if len(self.active_signals) >= self.config.max_active_signals:
             log.warning(
-                "Đã đạt giới hạn tối đa %d tín hiệu active.",
-                self.config.max_active_signals,
+                "Đã đạt giới hạn tối đa %d tín hiệu active trên %s.",
+                self.config.max_active_signals, symbol,
             )
             return True
 
@@ -123,21 +127,48 @@ class SignalTracker:
 
         return False
 
+    def check_conflict(
+        self,
+        candidate: SetupCandidate,
+        h4_trend: TrendDirection = TrendDirection.NEUTRAL,
+        structure: Optional[MarketStructureResult] = None,
+        current_price: float = 0.0,
+        current_time: Optional[datetime] = None,
+    ) -> ConflictDecision:
+        """
+        Phân xử xung đột toàn diện (trùng lặp, cooldown, lệnh ngược chiều BUY vs SELL).
+        """
+        return self.conflict_resolver.resolve_active_conflict(
+            new_candidate=candidate,
+            active_signals=self.active_signals,
+            h4_trend=h4_trend,
+            structure=structure,
+            current_price=current_price,
+            current_time=current_time,
+        )
+
     def register_signal(self, signal: TradingSignal) -> bool:
         """
-        Đăng ký một tín hiệu mới vào tracker.
-
-        Args:
-            signal: TradingSignal cần theo dõi.
-
-        Returns:
-            True nếu đăng ký thành công, False nếu trùng lặp hoặc là WAIT.
+        Đăng ký một tín hiệu mới vào tracker với đầy đủ lifecycle metadata.
         """
         if signal.is_wait:
             return False
 
+        if signal.signal_id in self._signals:
+            # Đã đăng ký rồi (idempotent), không từ chối nhưng cũng không duplicate
+            return True
+
         if self.is_duplicate(signal.symbol, signal.direction, signal.created_at):
             return False
+
+        # Anti-Hedging Guard: Không cho phép đăng ký lệnh ngược chiều khi đang có lệnh active trên cùng symbol
+        for sig in self._signals.values():
+            if sig.symbol == signal.symbol and sig.is_active and sig.direction != signal.direction:
+                log.warning(
+                    "⛔ Anti-Hedging Tracker: Đã có tín hiệu %s %s [%s] đang active. Chặn tín hiệu ngược chiều %s [%s].",
+                    sig.symbol, sig.direction.value, sig.signal_id, signal.direction.value, signal.signal_id,
+                )
+                return False
 
         if signal.expires_at is None:
             created = signal.created_at
@@ -145,14 +176,66 @@ class SignalTracker:
                 created = created.replace(tzinfo=timezone.utc)
             signal.expires_at = created + timedelta(hours=self.config.default_expiry_hours)
 
+        if not signal.setup_id:
+            signal.setup_id = f"setup_{signal.signal_id}"
+
+        # Đảm bảo trạng thái ban đầu là ACTIVE
+        signal.status = SignalStatus.ACTIVE
+        signal.lifecycle_status = SetupLifecycleStatus.ACTIVE
+
         self._signals[signal.signal_id] = signal
         log.info(
-            "Đã đăng ký tín hiệu [%s] %s %s | Entry: %.2f - %.2f | SL: %.2f | TP: %.2f",
-            signal.signal_id, signal.direction.value, signal.symbol,
+            "Đã đăng ký tín hiệu [%s] (Setup: %s) %s %s | Entry: %.2f - %.2f | SL: %.2f | TP: %.2f",
+            signal.signal_id, signal.setup_id, signal.direction.value, signal.symbol,
             signal.entry_zone_low, signal.entry_zone_high,
             signal.stop_loss, signal.take_profit_1,
         )
         return True
+
+    def revalidate_active_signals(
+        self,
+        structure: Optional[MarketStructureResult] = None,
+        current_price: float = 0.0,
+        current_time: Optional[datetime] = None,
+    ) -> list[TradingSignal]:
+        """
+        Tái kiểm tra (Revalidation) cấu trúc của các tín hiệu đang ACTIVE/APPROACHING chưa khớp lệnh:
+        - Nếu mức cản bảo vệ invalidation_level bị phá vỡ -> chuyển sang INVALIDATED.
+        - Nếu còn hợp lệ -> đánh dấu revalidated_at.
+        """
+        if current_time is None:
+            current_time = datetime.now(timezone.utc)
+        elif current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+
+        invalidated_signals: list[TradingSignal] = []
+
+        for sig in self.active_signals:
+            if sig.status == SignalStatus.ENTRY_REACHED:
+                # Lệnh đã khớp thì để update_price và Trailing Stop quản lý
+                continue
+
+            inval_p = sig.invalidation_level or sig.stop_loss
+            is_breached = False
+
+            if current_price > 0:
+                if sig.is_buy and current_price <= inval_p:
+                    is_breached = True
+                elif sig.is_sell and current_price >= inval_p:
+                    is_breached = True
+
+            if is_breached:
+                sig.status = SignalStatus.INVALIDATED
+                sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                invalidated_signals.append(sig)
+                log.info(
+                    "Revalidation thất bại: Tín hiệu %s [%s] bị vi phạm cấu trúc cản @ %.2f -> INVALIDATED",
+                    sig.direction.value, sig.signal_id, current_price,
+                )
+            else:
+                sig.revalidated_at = current_time
+
+        return invalidated_signals
 
     def update_price(
         self,
@@ -162,16 +245,7 @@ class SignalTracker:
         current_time: Optional[datetime] = None,
     ) -> list[TradingSignal]:
         """
-        Cập nhật trạng thái các tín hiệu active dựa trên giá thị trường.
-
-        Args:
-            current_price: Giá hiện tại (close/bid/ask).
-            high_price: Giá cao nhất của nến (nếu có).
-            low_price: Giá thấp nhất của nến (nếu có).
-            current_time: Thời điểm cập nhật (UTC).
-
-        Returns:
-            Danh sách các tín hiệu vừa có sự thay đổi trạng thái.
+        Cập nhật trạng thái các tín hiệu active dựa trên giá thị trường và chu kỳ sống SetupLifecycleStatus.
         """
         if high_price is None:
             high_price = current_price
@@ -179,80 +253,149 @@ class SignalTracker:
             low_price = current_price
         if current_time is None:
             current_time = datetime.now(timezone.utc)
+        elif current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
 
         changed_signals: list[TradingSignal] = []
 
         for sig in self.active_signals:
-            prev_status = sig.status
-
-            # Kiểm tra hết hạn (Expired)
+            # 1. Kiểm tra hết hạn (EXPIRED)
             if sig.expires_at is not None:
                 exp = sig.expires_at
                 if exp.tzinfo is None:
                     exp = exp.replace(tzinfo=timezone.utc)
                 if current_time >= exp:
                     sig.status = SignalStatus.EXPIRED
+                    sig.lifecycle_status = SetupLifecycleStatus.EXPIRED
                     changed_signals.append(sig)
                     log.info("Tín hiệu [%s] đã HẾT HẠN (EXPIRED)", sig.signal_id)
                     continue
 
-            # Xử lý theo từng trạng thái
+            # 2. Xử lý các tín hiệu chưa khớp (ACTIVE hoặc APPROACHING)
             if sig.status == SignalStatus.ACTIVE:
-                # Kiểm tra giá vào Entry Zone
+                # 2a. Kiểm tra khớp Entry Zone
                 in_entry = (low_price <= sig.entry_zone_high and high_price >= sig.entry_zone_low)
                 if in_entry:
                     sig.status = SignalStatus.ENTRY_REACHED
+                    sig.lifecycle_status = SetupLifecycleStatus.ENTRY_REACHED
                     changed_signals.append(sig)
                     log.info("Tín hiệu [%s] ĐÃ KHỚP VÙNG ENTRY (%.2f - %.2f)",
                              sig.signal_id, sig.entry_zone_low, sig.entry_zone_high)
-                else:
-                    # Nếu giá vi phạm SL trước khi vào entry -> INVALIDATED
-                    if sig.is_buy and low_price <= sig.stop_loss:
-                        sig.status = SignalStatus.INVALIDATED
-                        changed_signals.append(sig)
-                        log.info("Tín hiệu BUY [%s] bị INVALIDATED (giá chạm SL trước khi khớp)", sig.signal_id)
-                    elif sig.is_sell and high_price >= sig.stop_loss:
-                        sig.status = SignalStatus.INVALIDATED
-                        changed_signals.append(sig)
-                        log.info("Tín hiệu SELL [%s] bị INVALIDATED (giá chạm SL trước khi khớp)", sig.signal_id)
+                    continue
 
+                # 2b. Kiểm tra vi phạm Invalidation Level / Stop Loss trước khi vào entry -> INVALIDATED
+                inval_level = sig.invalidation_level or sig.stop_loss
+                if sig.is_buy and low_price <= inval_level:
+                    sig.status = SignalStatus.INVALIDATED
+                    sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                    changed_signals.append(sig)
+                    log.info("Tín hiệu BUY [%s] bị INVALIDATED (giá %.2f chạm mức cản %.2f)",
+                             sig.signal_id, low_price, inval_level)
+                    continue
+                elif sig.is_sell and high_price >= inval_level:
+                    sig.status = SignalStatus.INVALIDATED
+                    sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                    changed_signals.append(sig)
+                    log.info("Tín hiệu SELL [%s] bị INVALIDATED (giá %.2f chạm mức cản %.2f)",
+                             sig.signal_id, high_price, inval_level)
+                    continue
+
+                # 2c. Kiểm tra trạng thái đang tiến sát vùng entry (APPROACHING)
+                if sig.is_buy:
+                    dist_to_entry = current_price - sig.entry_zone_high
+                    if 0 < dist_to_entry <= self.config.approaching_distance_pts:
+                        if sig.lifecycle_status != SetupLifecycleStatus.APPROACHING:
+                            sig.lifecycle_status = SetupLifecycleStatus.APPROACHING
+                            changed_signals.append(sig)
+                            log.info("Tín hiệu BUY [%s] chuyển sang APPROACHING (Cách %.2f giá)",
+                                     sig.signal_id, dist_to_entry)
+                elif sig.is_sell:
+                    dist_to_entry = sig.entry_zone_low - current_price
+                    if 0 < dist_to_entry <= self.config.approaching_distance_pts:
+                        if sig.lifecycle_status != SetupLifecycleStatus.APPROACHING:
+                            sig.lifecycle_status = SetupLifecycleStatus.APPROACHING
+                            changed_signals.append(sig)
+                            log.info("Tín hiệu SELL [%s] chuyển sang APPROACHING (Cách %.2f giá)",
+                                     sig.signal_id, dist_to_entry)
+
+            # 3. Xử lý các tín hiệu ĐÃ KHỚP (ENTRY_REACHED / IN-TRADE)
             elif sig.status == SignalStatus.ENTRY_REACHED:
-                # Kiểm tra Take Profit & Stop Loss
                 if sig.is_buy:
                     if high_price >= sig.take_profit_1:
                         sig.status = SignalStatus.TP_REACHED
-                        # Tự động kéo SL về hòa vốn (Breakeven) bảo vệ vốn và lợi nhuận
-                        sig.stop_loss = sig.entry_price
+                        sig.lifecycle_status = SetupLifecycleStatus.COMPLETED
+                        sig.stop_loss = sig.entry_price  # Kéo BE
                         changed_signals.append(sig)
-                        log.info(
-                            "Tín hiệu BUY [%s] ĐẠT TAKE PROFIT 1 (%.2f) -> Ăn TP thành công! Dời SL về hòa vốn (%.2f)",
-                            sig.signal_id, sig.take_profit_1, sig.entry_price,
-                        )
+                        log.info("Tín hiệu BUY [%s] ĐẠT TP1 (%.2f) -> COMPLETED!", sig.signal_id, sig.take_profit_1)
                     elif low_price <= sig.stop_loss:
                         sig.status = SignalStatus.SL_REACHED
+                        sig.lifecycle_status = SetupLifecycleStatus.COMPLETED
                         changed_signals.append(sig)
-                        log.info("Tín hiệu BUY [%s] CHẠM STOP LOSS (%.2f)", sig.signal_id, sig.stop_loss)
+                        log.info("Tín hiệu BUY [%s] CHẠM SL (%.2f) -> COMPLETED!", sig.signal_id, sig.stop_loss)
 
                 elif sig.is_sell:
                     if low_price <= sig.take_profit_1:
                         sig.status = SignalStatus.TP_REACHED
-                        # Tự động kéo SL về hòa vốn (Breakeven) bảo vệ vốn và lợi nhuận
-                        sig.stop_loss = sig.entry_price
+                        sig.lifecycle_status = SetupLifecycleStatus.COMPLETED
+                        sig.stop_loss = sig.entry_price  # Kéo BE
                         changed_signals.append(sig)
-                        log.info(
-                            "Tín hiệu SELL [%s] ĐẠT TAKE PROFIT 1 (%.2f) -> Ăn TP thành công! Dời SL về hòa vốn (%.2f)",
-                            sig.signal_id, sig.take_profit_1, sig.entry_price,
-                        )
+                        log.info("Tín hiệu SELL [%s] ĐẠT TP1 (%.2f) -> COMPLETED!", sig.signal_id, sig.take_profit_1)
                     elif high_price >= sig.stop_loss:
                         sig.status = SignalStatus.SL_REACHED
+                        sig.lifecycle_status = SetupLifecycleStatus.COMPLETED
                         changed_signals.append(sig)
-                        log.info("Tín hiệu SELL [%s] CHẠM STOP LOSS (%.2f)", sig.signal_id, sig.stop_loss)
+                        log.info("Tín hiệu SELL [%s] CHẠM SL (%.2f) -> COMPLETED!", sig.signal_id, sig.stop_loss)
 
         return changed_signals
 
     def get_signal(self, signal_id: str) -> Optional[TradingSignal]:
         """Lấy thông tin tín hiệu theo ID."""
         return self._signals.get(signal_id)
+
+    def cancel_signal(self, signal_id: str, reason: str = "") -> Optional[TradingSignal]:
+        """
+        Hủy tín hiệu thủ công hoặc do xung đột đảo chiều (chuyển sang CANCELLED).
+        """
+        sig = self._signals.get(signal_id)
+        if sig and sig.is_active:
+            sig.status = SignalStatus.CANCELLED
+            sig.lifecycle_status = SetupLifecycleStatus.CANCELLED
+            if reason:
+                sig.reasons.append(f"Hủy do: {reason}")
+            log.info("Tín hiệu [%s] đã bị HỦY (CANCELLED): %s", signal_id, reason)
+            return sig
+        return None
+
+    def cleanup_old_signals(self, max_age_hours: int = 48) -> int:
+        """
+        Dọn dẹp các tín hiệu đã hoàn tất (TP, SL, EXPIRED, CANCELLED) cũ hơn max_age_hours
+        để giải phóng RAM và giữ tốc độ xử lý is_duplicate() luôn nhanh nhất.
+        """
+        now = datetime.now(timezone.utc)
+        to_delete: list[str] = []
+
+        for sig_id, sig in list(self._signals.items()):
+            if sig.is_active:
+                continue
+
+            created = sig.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+
+            age_hours = (now - created).total_seconds() / 3600.0
+            if age_hours > max_age_hours:
+                to_delete.append(sig_id)
+
+        for sig_id in to_delete:
+            self._signals.pop(sig_id, None)
+
+        if to_delete:
+            log.info(
+                "SignalTracker đã dọn dẹp %d tín hiệu cũ (>%d giờ) khỏi RAM.",
+                len(to_delete),
+                max_age_hours,
+            )
+        return len(to_delete)
 
     def clear(self) -> None:
         """Xóa toàn bộ tín hiệu trong bộ nhớ."""

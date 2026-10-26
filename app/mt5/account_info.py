@@ -11,6 +11,7 @@ from typing import Optional
 
 import MetaTrader5 as mt5
 
+from app.mt5.lock import mt5_lock
 from logger import get_logger
 
 log = get_logger("mt5.account")
@@ -53,11 +54,12 @@ def get_account_info() -> Optional[AccountInfo]:
     Lưu ý:
         Cần kết nối MT5 trước (qua MT5Connector).
     """
-    info = mt5.account_info()
-    if info is None:
-        error = mt5.last_error()
-        log.error("Không lấy được account info: %s", error)
-        return None
+    with mt5_lock:
+        info = mt5.account_info()
+        if info is None:
+            error = mt5.last_error()
+            log.error("Không lấy được account info: %s", error)
+            return None
 
     account = AccountInfo(
         login=info.login,

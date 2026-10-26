@@ -18,6 +18,7 @@ from typing import Optional
 
 import MetaTrader5 as mt5
 
+from app.mt5.lock import mt5_lock
 from config import MT5Config
 from logger import get_logger
 
@@ -83,7 +84,8 @@ class MT5Connector:
             return False
         # Kiểm tra thực tế bằng terminal_info
         try:
-            info = mt5.terminal_info()
+            with mt5_lock:
+                info = mt5.terminal_info()
             if info is None:
                 self._connected = False
                 return False
@@ -117,15 +119,17 @@ class MT5Connector:
 
         success = False
         try:
-            if init_kwargs:
-                success = mt5.initialize(**init_kwargs)
-            else:
-                success = mt5.initialize()
+            with mt5_lock:
+                if init_kwargs:
+                    success = mt5.initialize(**init_kwargs)
+                else:
+                    success = mt5.initialize()
         except Exception as e:
             log.error("Lỗi ngoại lệ khi khởi tạo MT5: %s", e)
 
         if not success:
-            error_code = mt5.last_error()
+            with mt5_lock:
+                error_code = mt5.last_error()
             error_msg = f"Không thể khởi tạo MT5: {error_code}"
             log.error(error_msg)
             self._connected = False
@@ -180,7 +184,8 @@ class MT5Connector:
     def disconnect(self) -> None:
         """Ngắt kết nối MT5 an toàn."""
         if self._connected:
-            mt5.shutdown()
+            with mt5_lock:
+                mt5.shutdown()
             self._connected = False
             log.info("Đã ngắt kết nối MetaTrader 5")
 
@@ -195,7 +200,8 @@ class MT5Connector:
             log.warning("MT5 chưa kết nối. Gọi connect() trước.")
             return None
 
-        info = mt5.terminal_info()
+        with mt5_lock:
+            info = mt5.terminal_info()
         if info is None:
             log.error("Không lấy được terminal info")
             return None

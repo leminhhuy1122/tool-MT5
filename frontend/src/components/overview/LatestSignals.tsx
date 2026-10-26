@@ -1,15 +1,20 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertCircle,
+  BrainCircuit,
   CheckCircle2,
-  ExternalLink,
+  ChevronRight,
   Radio,
+  Scale,
   Search,
   Send,
   TrendingDown,
   TrendingUp,
+  Trophy,
+  XCircle,
+  Zap,
 } from 'lucide-react';
-import type { SignalDirection, SignalItem } from '../../types';
+import type { SignalItem } from '../../types';
 import { SignalDetailModal } from './SignalDetailModal';
 import { api } from '../../services/api';
 
@@ -21,7 +26,7 @@ interface LatestSignalsProps {
 export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPrice }) => {
   const [selectedSignal, setSelectedSignal] = useState<SignalItem | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [directionFilter, setDirectionFilter] = useState<'ALL' | SignalDirection | 'ACTIVE'>('ALL');
+  const [filterMode, setFilterMode] = useState<'ALL' | 'WIN' | 'LOST' | 'ACTIVE' | 'PREDICTIVE' | 'BUY' | 'SELL'>('ALL');
 
   // Admin Quick Announcement state
   const [customMsg, setCustomMsg] = useState<string>('');
@@ -31,6 +36,27 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
   // Resend signal tracking
   const [resendingId, setResendingId] = useState<string | null>(null);
 
+  // Thống kê Win / Lost nhanh trên danh sách tín hiệu
+  const winCount = useMemo(() => signals.filter((s) => s.isWin || s.status === 'TP_REACHED').length, [signals]);
+  const lossCount = useMemo(() => signals.filter((s) => s.isLoss || s.status === 'SL_REACHED').length, [signals]);
+  const beCount = useMemo(() => signals.filter((s) => s.isBreakeven).length, [signals]);
+  const activeCount = useMemo(() => signals.filter((s) => s.status === 'ACTIVE' || s.status === 'ENTRY_REACHED').length, [signals]);
+  const predictiveCount = useMemo(() => signals.filter((s) => s.isPredictive || s.setupType === 'PREDICTIVE_LIMIT').length, [signals]);
+  const buyCount = useMemo(() => signals.filter((s) => s.direction === 'BUY').length, [signals]);
+  const sellCount = useMemo(() => signals.filter((s) => s.direction === 'SELL').length, [signals]);
+
+  const resolvedCount = winCount + lossCount + beCount;
+  const winRate = resolvedCount > 0 ? (winCount / resolvedCount) * 100 : 0;
+
+  const totalNetPips = useMemo(() => {
+    return signals.reduce((sum, s) => {
+      if (s.pnlPips !== undefined && s.pnlPips !== null) {
+        return sum + s.pnlPips;
+      }
+      return sum;
+    }, 0);
+  }, [signals]);
+
   const filteredSignals = useMemo(() => {
     return signals.filter((s) => {
       const matchSearch =
@@ -39,16 +65,24 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
         s.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.timeframe.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchFilter =
-        directionFilter === 'ALL'
-          ? true
-          : directionFilter === 'ACTIVE'
-          ? s.status === 'ACTIVE'
-          : s.direction === directionFilter;
+      let matchFilter = true;
+      if (filterMode === 'WIN') {
+        matchFilter = Boolean(s.isWin || s.status === 'TP_REACHED');
+      } else if (filterMode === 'LOST') {
+        matchFilter = Boolean(s.isLoss || s.status === 'SL_REACHED');
+      } else if (filterMode === 'ACTIVE') {
+        matchFilter = s.status === 'ACTIVE' || s.status === 'ENTRY_REACHED';
+      } else if (filterMode === 'PREDICTIVE') {
+        matchFilter = Boolean(s.isPredictive || s.setupType === 'PREDICTIVE_LIMIT');
+      } else if (filterMode === 'BUY') {
+        matchFilter = s.direction === 'BUY';
+      } else if (filterMode === 'SELL') {
+        matchFilter = s.direction === 'SELL';
+      }
 
       return matchSearch && matchFilter;
     });
-  }, [signals, searchTerm, directionFilter]);
+  }, [signals, searchTerm, filterMode]);
 
   const handleSendCustomMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,44 +121,37 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
       <div
         className="card"
         style={{
-          borderLeft: '4px solid var(--color-accent-gold)',
+          borderLeft: '3px solid var(--color-accent-gold)',
           backgroundColor: '#0F172A',
-          padding: '16px 20px',
+          padding: '8px 14px',
+          borderRadius: '8px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '18px' }}>📢</span>
-            <div>
-              <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary)' }}>
-                Admin Điều Khiển Phát Tin Nhanh Lên Telegram
-              </h3>
-              <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                Gửi thông báo khẩn cấp, nhắc nhở hoặc lệnh cập nhật tới Kênh VIP <strong>@dbgtradingfx</strong>.
-              </p>
-            </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '14px' }}>📢</span>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>
+              Bắn Tin Nhanh Telegram (@dbgtradingfx)
+            </span>
           </div>
-          <span className="status-pill connected" style={{ fontSize: '10px' }}>
-            KÊNH: @dbgtradingfx
-          </span>
         </div>
 
-        <form onSubmit={handleSendCustomMessage} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <form onSubmit={handleSendCustomMessage} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <input
             type="text"
-            placeholder="Nhập thông báo Admin (Ví dụ: Chú ý Vàng sắp có biến động mạnh đầu phiên Mỹ, anh em quản trị rủi ro...)"
+            placeholder="Nhập thông báo gửi Telegram..."
             value={customMsg}
             onChange={(e) => setCustomMsg(e.target.value)}
             disabled={isSendingCustom}
             style={{
               flex: 1,
-              minWidth: '280px',
-              padding: '10px 14px',
+              minWidth: '220px',
+              padding: '6px 12px',
               backgroundColor: 'var(--bg-card-subtle)',
               border: '1px solid var(--border-color)',
               borderRadius: 'var(--radius-sm)',
               color: 'var(--text-primary)',
-              fontSize: '13px',
+              fontSize: '12px',
               outline: 'none',
             }}
           />
@@ -135,14 +162,14 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              padding: '10px 18px',
+              gap: '4px',
+              padding: '6px 12px',
               fontWeight: 700,
-              fontSize: '12px',
+              fontSize: '11px',
             }}
           >
-            <Send size={14} />
-            {isSendingCustom ? 'Đang gửi...' : 'Gửi Thông Báo Kênh'}
+            <Send size={11} />
+            {isSendingCustom ? 'Đang gửi...' : 'Gửi'}
           </button>
         </form>
 
@@ -178,10 +205,10 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
       </div>
 
       {/* Signals Table Card */}
-      <div className="card">
-        <div className="card-header" style={{ flexWrap: 'wrap', gap: '10px' }}>
-          <span className="card-title">
-            <Radio size={16} className="text-gold" /> Tín Hiệu Giao Dịch & Điều Khiển Bắn Lại Lệnh
+      <div className="card" style={{ padding: '12px 16px', borderRadius: '10px' }}>
+        <div className="card-header" style={{ flexWrap: 'wrap', gap: '8px', paddingBottom: '8px' }}>
+          <span className="card-title" style={{ fontSize: '13px' }}>
+            <Radio size={14} className="text-gold" /> Tín Hiệu & Lệnh Giao Dịch
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             {/* Quick Filter buttons */}
@@ -194,28 +221,39 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
                 borderRadius: 'var(--radius-sm)',
                 padding: '2px',
                 gap: '2px',
+                flexWrap: 'wrap',
               }}
             >
-              {(['ALL', 'BUY', 'SELL', 'ACTIVE'] as const).map((filter) => (
-                <button
-                  key={filter}
-                  onClick={() => setDirectionFilter(filter)}
-                  style={{
-                    padding: '3px 8px',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    borderRadius: '4px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    backgroundColor:
-                      directionFilter === filter ? 'var(--color-accent-gold)' : 'transparent',
-                    color: directionFilter === filter ? '#0B0F19' : 'var(--text-secondary)',
-                    transition: 'all 0.12s ease',
-                  }}
-                >
-                  {filter === 'ALL' ? `Tất cả (${signals.length})` : filter}
-                </button>
-              ))}
+              {[
+                { id: 'ALL', label: `Tất cả (${signals.length})`, color: 'var(--color-accent-gold)' },
+                { id: 'WIN', label: `🏆 WIN (${winCount})`, color: '#10B981' },
+                { id: 'LOST', label: `❌ LOST (${lossCount})`, color: '#EF4444' },
+                { id: 'ACTIVE', label: `⚡ Đang chạy (${activeCount})`, color: '#38BDF8' },
+                { id: 'PREDICTIVE', label: `🔮 Dự đoán (${predictiveCount})`, color: '#C084FC' },
+                { id: 'BUY', label: `BUY (${buyCount})`, color: '#10B981' },
+                { id: 'SELL', label: `SELL (${sellCount})`, color: '#EF4444' },
+              ].map((btn) => {
+                const isActive = filterMode === btn.id;
+                return (
+                  <button
+                    key={btn.id}
+                    onClick={() => setFilterMode(btn.id as any)}
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      borderRadius: '4px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      backgroundColor: isActive ? btn.color : 'transparent',
+                      color: isActive ? '#0B0F19' : 'var(--text-secondary)',
+                      transition: 'all 0.12s ease',
+                    }}
+                  >
+                    {btn.label}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Search box */}
@@ -250,36 +288,210 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
           </div>
         </div>
 
+        {/* Win / Lost Telemetry Summary Bar */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            padding: '10px 16px',
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            borderBottom: '1px solid var(--border-color)',
+            flexWrap: 'wrap',
+            fontSize: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>Tổng lệnh:</span>
+            <strong style={{ color: 'var(--text-primary)' }}>{signals.length}</strong>
+          </div>
+          <span style={{ color: 'var(--border-color)' }}>|</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ color: '#10B981', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <TrendingUp size={14} /> Thắng (WIN):
+            </span>
+            <strong style={{ color: '#10B981' }}>{winCount} lệnh</strong>
+            {resolvedCount > 0 && (
+              <span style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10B981', fontSize: '10px', padding: '1px 6px', borderRadius: '4px', fontWeight: 800 }}>
+                {winRate.toFixed(1)}% WR
+              </span>
+            )}
+          </div>
+          <span style={{ color: 'var(--border-color)' }}>|</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ color: '#EF4444', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <TrendingDown size={14} /> Thua (LOST):
+            </span>
+            <strong style={{ color: '#EF4444' }}>{lossCount} lệnh</strong>
+          </div>
+          {beCount > 0 && (
+            <>
+              <span style={{ color: 'var(--border-color)' }}>|</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ color: '#F59E0B' }}>⚖️ Hòa vốn:</span>
+                <strong style={{ color: '#F59E0B' }}>{beCount}</strong>
+              </div>
+            </>
+          )}
+          {activeCount > 0 && (
+            <>
+              <span style={{ color: 'var(--border-color)' }}>|</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ color: '#38BDF8' }}>⚡ Đang chạy:</span>
+                <strong style={{ color: '#38BDF8' }}>{activeCount}</strong>
+              </div>
+            </>
+          )}
+          {resolvedCount > 0 && (
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Tổng Net Pips:</span>
+              <strong style={{ color: totalNetPips >= 0 ? '#10B981' : '#EF4444', fontFamily: 'monospace' }}>
+                {totalNetPips >= 0 ? `+${totalNetPips.toFixed(1)}` : totalNetPips.toFixed(1)} Pips
+              </strong>
+            </div>
+          )}
+        </div>
+
         {filteredSignals.length === 0 ? (
           <div
             style={{
-              padding: '36px 20px',
+              padding: '32px 24px',
               textAlign: 'center',
-              color: 'var(--text-muted)',
-              backgroundColor: 'var(--bg-card-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px dashed var(--border-color)',
+              backgroundColor: 'rgba(15, 23, 42, 0.75)',
+              borderRadius: '12px',
+              border: '1px solid rgba(56, 189, 248, 0.25)',
+              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '12px',
+              position: 'relative',
+              overflow: 'hidden',
             }}
           >
-            {signals.length === 0
-              ? 'Chưa có tín hiệu nào trong cơ sở dữ liệu SQLite.'
-              : 'Không tìm thấy tín hiệu phù hợp với bộ lọc hiện tại.'}
+            {/* Top scanning pulse accent */}
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: '2px',
+                background: 'linear-gradient(90deg, #38BDF8, #F59E0B, #10B981)',
+              }}
+            />
+
+            <div
+              style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '50%',
+                backgroundColor: 'rgba(56, 189, 248, 0.12)',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#38BDF8',
+                position: 'relative',
+              }}
+            >
+              <BrainCircuit size={24} />
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '-2px',
+                  right: '-2px',
+                  width: '10px',
+                  height: '10px',
+                  borderRadius: '50%',
+                  backgroundColor: '#10B981',
+                  boxShadow: '0 0 8px #10B981',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  padding: '3px 10px',
+                  borderRadius: '999px',
+                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                  color: '#10B981',
+                  border: '1px solid rgba(16, 185, 129, 0.35)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                }}
+              >
+                <span className="live-dot pulse" style={{ width: '6px', height: '6px' }} />
+                HỆ THỐNG ĐANG CHẠY 100% • KHÔNG BỊ TREO
+              </span>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  padding: '3px 10px',
+                  borderRadius: '999px',
+                  backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                  color: '#F59E0B',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                }}
+              >
+                QUÉT GIÁ MT5 MỖI 5 GIÂY
+              </span>
+            </div>
+
+            <h4 style={{ fontSize: '15px', fontWeight: 800, color: '#F8FAFC', margin: 0 }}>
+              {signals.length === 0
+                ? 'AI Đang Quét Nến M5 & Chờ Setup Đạt Chuẩn Smart Money (SMC)'
+                : 'Không tìm thấy tín hiệu phù hợp với bộ lọc hiện tại'}
+            </h4>
+
+            <p style={{ fontSize: '12px', color: '#94A3B8', maxWidth: '640px', lineHeight: 1.6, margin: 0 }}>
+              {signals.length === 0 ? (
+                <>
+                  Hệ thống đang hoạt động bình thường và liên tục phân tích từng tick giá XAUUSD.
+                  Khi thị trường đi ngang (Ranging) hoặc các khung thời gian H4/H1/M5 đang mâu thuẫn,
+                  thuật toán kích hoạt chế độ <strong>Bảo Vệ Vốn</strong> (kiên quyết không vào lệnh bừa bãi).
+                  Ngay khi nến M5 đóng cửa xác nhận điểm vào lệnh đẹp, lệnh sẽ tự động xuất hiện tại đây và khớp ngay vào <strong>Ví Đầu Tư Ảo (0.01 lot)</strong>!
+                </>
+              ) : (
+                'Hãy thử chọn bộ lọc khác (Tất cả, Thắng, Thua, Đang chạy) hoặc nhập từ khóa tìm kiếm mới.'
+              )}
+            </p>
           </div>
         ) : (
           <div className="table-container">
+            {/* Thanh hướng dẫn tương tác */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '6px 14px',
+                backgroundColor: 'rgba(15, 23, 42, 0.45)',
+                borderBottom: '1px solid var(--border-color)',
+                fontSize: '11px',
+                color: '#94A3B8',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ color: 'var(--color-accent-gold)' }}>💡</span>
+                <span>Nhấn vào <strong>bất kỳ vị trí nào trên dòng</strong> để xem chi tiết phân tích SMC & Order Block.</span>
+              </div>
+              <span style={{ fontSize: '10px', color: '#64748B' }}>Tự động đồng bộ tick MT5</span>
+            </div>
+
             <table className="trading-table">
               <thead>
                 <tr>
-                  <th>Lệnh</th>
-                  <th>Mã Tín Hiệu</th>
-                  <th>Khung</th>
-                  <th>Vùng Entry</th>
-                  <th>SL</th>
-                  <th>TP1 (+10 giá)</th>
-                  <th>TP2</th>
-                  <th>Score</th>
-                  <th>Trạng Thái</th>
-                  <th style={{ textAlign: 'center' }}>Thao Tác Admin</th>
+                  <th style={{ width: '190px' }}>Tín Hiệu</th>
+                  <th>Kế Hoạch Giá (Entry • SL • TP)</th>
+                  <th style={{ width: '90px', textAlign: 'center' }}>Điểm AI</th>
+                  <th style={{ width: '210px' }}>Kết Quả / Trạng Thái</th>
+                  <th style={{ width: '100px', textAlign: 'right' }}>Thao Tác</th>
                 </tr>
               </thead>
               <tbody>
@@ -290,122 +502,319 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
                   const isThisResending = resendingId === s.id;
 
                   return (
-                    <tr key={s.id}>
+                    <tr
+                      key={s.id}
+                      onClick={() => setSelectedSignal(s)}
+                      className="clickable-signal-row"
+                      title={`Nhấn vào đây để xem phân tích chi tiết lệnh #${s.id}`}
+                    >
+                      {/* Cột 1: Tín Hiệu (Lệnh / Mã / Khung) */}
                       <td>
-                        <span className={`badge-direction ${dirClass}`}>
-                          {isBuy ? <TrendingUp size={12} /> : isSell ? <TrendingDown size={12} /> : null}
-                          {s.direction}
-                        </span>
-                      </td>
-                      <td className="font-mono font-medium">{s.id}</td>
-                      <td>
-                        <span className="font-mono text-xs text-secondary">{s.timeframe}</span>
-                      </td>
-                      <td className="font-mono font-semibold">
-                        {s.entryZone[0] ? `${s.entryZone[0].toFixed(2)} - ${s.entryZone[1].toFixed(2)}` : 'Chờ nến'}
-                      </td>
-                      <td className="font-mono text-sell">
-                        {s.stopLoss ? `$${s.stopLoss.toFixed(2)}` : '-'}
-                      </td>
-                      <td className="font-mono text-buy">
-                        {s.takeProfit1 ? `$${s.takeProfit1.toFixed(2)}` : '-'}
-                      </td>
-                      <td className="font-mono text-buy">
-                        {s.takeProfit2 ? `$${s.takeProfit2.toFixed(2)}` : '-'}
-                      </td>
-                      <td>
-                        <span className="font-mono font-bold text-gold">{s.score}</span>
-                        <span className="text-xs text-muted">/100</span>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span
-                            className={`status-pill ${
-                              s.status === 'ENTRY_REACHED' || s.status === 'TP_REACHED'
-                                ? 'connected'
-                                : s.status === 'ACTIVE'
-                                ? 'warning'
-                                : 'standby'
-                            }`}
+                            className={`badge-direction ${dirClass}`}
                             style={{
-                              padding: '2px 8px',
-                              fontSize: '10px',
+                              padding: '3px 7px',
+                              fontSize: '11px',
                               fontWeight: 800,
-                              backgroundColor:
-                                s.status === 'ENTRY_REACHED'
-                                  ? 'rgba(16, 185, 129, 0.2)'
-                                  : s.status === 'ACTIVE'
-                                  ? 'rgba(245, 158, 11, 0.2)'
-                                  : undefined,
-                              color:
-                                s.status === 'ENTRY_REACHED'
-                                  ? '#10B981'
-                                  : s.status === 'ACTIVE'
-                                  ? '#F59E0B'
-                                  : undefined,
-                              border:
-                                s.status === 'ENTRY_REACHED'
-                                  ? '1px solid rgba(16, 185, 129, 0.4)'
-                                  : s.status === 'ACTIVE'
-                                  ? '1px solid rgba(245, 158, 11, 0.4)'
-                                  : undefined,
+                              borderRadius: '4px',
                             }}
                           >
-                            {s.status === 'ENTRY_REACHED' ? 'KHỚP ENTRY' : s.status === 'ACTIVE' ? 'CHỜ ENTRY' : s.status}
+                            {isBuy ? <TrendingUp size={12} /> : isSell ? <TrendingDown size={12} /> : null}
+                            {s.direction}
                           </span>
-
-                          {/* Hiển thị số Pips lời/lỗ thả nổi nếu lệnh đang khớp ENTRY_REACHED */}
-                          {s.status === 'ENTRY_REACHED' && currentPrice && currentPrice > 0 && (
-                            (() => {
-                              const entryPrice = s.plannedEntry || (s.entryZone[0] + s.entryZone[1]) / 2;
-                              const pnlPoints = s.direction === 'SELL' ? entryPrice - currentPrice : currentPrice - entryPrice;
-                              const pnlPips = pnlPoints * 10;
-                              const isProf = pnlPoints >= 0;
-                              return (
+                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <span className="font-mono font-bold text-sm text-primary">#{s.id}</span>
+                              {(s.isPredictive || s.setupType === 'PREDICTIVE_LIMIT') && (
                                 <span
                                   style={{
-                                    fontSize: '10px',
+                                    padding: '1px 5px',
+                                    borderRadius: '3px',
+                                    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                                    color: '#C084FC',
+                                    fontSize: '9px',
                                     fontWeight: 800,
-                                    fontFamily: 'monospace',
-                                    color: isProf ? '#10B981' : '#EF4444',
+                                    border: '1px solid rgba(168, 85, 247, 0.35)',
                                   }}
-                                  title={`Giá khớp: ${entryPrice.toFixed(2)} | Giá hiện tại: ${currentPrice.toFixed(2)}`}
                                 >
-                                  {isProf ? `+${pnlPips.toFixed(1)}p` : `${pnlPips.toFixed(1)}p`} ({isProf ? `+${pnlPoints.toFixed(2)}` : pnlPoints.toFixed(2)})
+                                  DỰ ĐOÁN
                                 </span>
-                              );
-                            })()
+                              )}
+                            </div>
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                              {s.timeframe} • SMC Setup
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Cột 2: Kế Hoạch Giá (Entry • SL • TP) - Gom gọn thông minh */}
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600 }}>Entry:</span>
+                            <span className="font-mono font-bold" style={{ color: '#F8FAFC', fontSize: '12px' }}>
+                              {s.entryZone[0] ? `$${s.entryZone[0].toFixed(2)} - $${s.entryZone[1].toFixed(2)}` : 'Chờ nến xác nhận'}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', fontFamily: 'monospace' }}>
+                            <span style={{ color: '#F87171' }}>
+                              <span style={{ fontSize: '9px', color: '#94A3B8', marginRight: '3px' }}>SL</span>
+                              ${s.stopLoss ? s.stopLoss.toFixed(2) : '-'}
+                            </span>
+                            <span style={{ color: 'rgba(255, 255, 255, 0.2)' }}>|</span>
+                            <span style={{ color: '#34D399' }}>
+                              <span style={{ fontSize: '9px', color: '#94A3B8', marginRight: '3px' }}>TP1</span>
+                              ${s.takeProfit1 ? s.takeProfit1.toFixed(2) : '-'}
+                            </span>
+                            {s.takeProfit2 && (
+                              <>
+                                <span style={{ color: 'rgba(255, 255, 255, 0.2)' }}>|</span>
+                                <span style={{ color: '#10B981' }}>
+                                  <span style={{ fontSize: '9px', color: '#94A3B8', marginRight: '3px' }}>TP2</span>
+                                  ${s.takeProfit2.toFixed(2)}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Cột 3: Điểm AI (Score) */}
+                      <td style={{ textAlign: 'center' }}>
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 8px',
+                            borderRadius: '4px',
+                            fontFamily: 'monospace',
+                            fontWeight: 800,
+                            fontSize: '12px',
+                            backgroundColor:
+                              s.score >= 80 ? 'rgba(16, 185, 129, 0.15)' : s.score >= 70 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                            color: s.score >= 80 ? '#10B981' : s.score >= 70 ? '#F59E0B' : '#EF4444',
+                            border: `1px solid ${
+                              s.score >= 80 ? 'rgba(16, 185, 129, 0.35)' : s.score >= 70 ? 'rgba(245, 158, 11, 0.35)' : 'rgba(239, 68, 68, 0.35)'
+                            }`,
+                          }}
+                        >
+                          {s.score}
+                          <span style={{ fontSize: '10px', opacity: 0.7 }}>/100</span>
+                        </div>
+                      </td>
+
+                      {/* Cột 4: Kết Quả / Trạng Thái */}
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          {(s.isWin || s.status === 'TP_REACHED') ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '3px 8px',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                                  color: '#10B981',
+                                  border: '1px solid rgba(16, 185, 129, 0.4)',
+                                  boxShadow: '0 0 8px rgba(16, 185, 129, 0.15)',
+                                  width: 'fit-content',
+                                }}
+                              >
+                                <Trophy size={12} /> WIN {s.pnlPips !== null && s.pnlPips !== undefined ? `(+${s.pnlPips.toFixed(1)}p)` : '(+100p)'}
+                              </span>
+                              {s.exitPrice ? (
+                                <span style={{ fontSize: '10px', color: '#10B981', fontFamily: 'monospace' }}>
+                                  Chốt @ ${s.exitPrice.toFixed(2)}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (s.isLoss || s.status === 'SL_REACHED') ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '3px 8px',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                                  color: '#EF4444',
+                                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                                  width: 'fit-content',
+                                }}
+                              >
+                                <XCircle size={12} /> LOST {s.pnlPips !== null && s.pnlPips !== undefined ? `(${s.pnlPips.toFixed(1)}p)` : '(-100p)'}
+                              </span>
+                              {s.exitPrice ? (
+                                <span style={{ fontSize: '10px', color: '#EF4444', fontFamily: 'monospace' }}>
+                                  Cắt @ ${s.exitPrice.toFixed(2)}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : s.isBreakeven ? (
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '3px 8px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                                color: '#F59E0B',
+                                border: '1px solid rgba(245, 158, 11, 0.4)',
+                                width: 'fit-content',
+                              }}
+                            >
+                              <Scale size={12} /> HÒA VỐN (0.0p)
+                            </span>
+                          ) : s.status === 'ENTRY_REACHED' ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '3px 8px',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(56, 189, 248, 0.2)',
+                                  color: '#38BDF8',
+                                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                                  width: 'fit-content',
+                                }}
+                              >
+                                <Zap size={12} /> ĐANG KHỚP
+                              </span>
+                              {currentPrice && currentPrice > 0 && (() => {
+                                const entryPrice = s.plannedEntry || (s.entryZone[0] + s.entryZone[1]) / 2;
+                                const pnlPoints = s.direction === 'SELL' ? entryPrice - currentPrice : currentPrice - entryPrice;
+                                const pnlPips = pnlPoints * 10;
+                                const isProf = pnlPoints >= 0;
+                                return (
+                                  <span
+                                    style={{
+                                      fontSize: '10px',
+                                      fontWeight: 800,
+                                      fontFamily: 'monospace',
+                                      color: isProf ? '#10B981' : '#EF4444',
+                                    }}
+                                  >
+                                    {isProf ? `+${pnlPips.toFixed(1)}p` : `${pnlPips.toFixed(1)}p`} ({isProf ? `+${pnlPoints.toFixed(2)}` : pnlPoints.toFixed(2)})
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                          ) : s.status === 'ACTIVE' ? (
+                            (s.isPredictive || s.setupType === 'PREDICTIVE_LIMIT') ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px',
+                                    padding: '3px 8px',
+                                    fontSize: '11px',
+                                    fontWeight: 800,
+                                    borderRadius: '4px',
+                                    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                                    color: '#C084FC',
+                                    border: '1px solid rgba(168, 85, 247, 0.45)',
+                                    width: 'fit-content',
+                                  }}
+                                >
+                                  🔮 DỰ ĐOÁN TỪ XA
+                                </span>
+                                {currentPrice && currentPrice > 0 && (() => {
+                                  const dist = Math.abs(currentPrice - (s.plannedEntry || s.entryZone[0]));
+                                  return (
+                                    <span style={{ fontSize: '10px', color: '#C084FC', fontFamily: 'monospace', fontWeight: 600 }}>
+                                      Cách {dist.toFixed(1)} giá
+                                    </span>
+                                  );
+                                })()}
+                              </div>
+                            ) : (
+                              <span
+                                style={{
+                                  padding: '3px 8px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                                  color: '#F59E0B',
+                                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                                  width: 'fit-content',
+                                }}
+                              >
+                                ⏳ CHỜ ENTRY
+                              </span>
+                            )
+                          ) : (
+                            <span
+                              style={{
+                                padding: '2px 8px',
+                                fontSize: '10px',
+                                fontWeight: 600,
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(148, 163, 184, 0.1)',
+                                color: '#94A3B8',
+                                border: '1px solid rgba(148, 163, 184, 0.2)',
+                                width: 'fit-content',
+                              }}
+                            >
+                              {s.status === 'EXPIRED' ? 'HẾT HẠN' : s.status === 'INVALIDATED' ? 'HỦY SETUP' : s.status}
+                            </span>
                           )}
                         </div>
                       </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                          <button
-                            className="btn btn-secondary"
-                            style={{ padding: '4px 8px', fontSize: '11px' }}
-                            onClick={() => setSelectedSignal(s)}
-                            title="Xem chi tiết setup và lý do phân tích"
-                          >
-                            <ExternalLink size={12} />
-                            Xem
-                          </button>
+
+                      {/* Cột 5: Thao Tác (Gửi Tele & Mũi tên xem chi tiết) */}
+                      <td style={{ textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', justifyContent: 'flex-end' }}>
                           <button
                             className="btn btn-primary"
                             style={{
-                              padding: '4px 10px',
+                              padding: '4px 8px',
                               fontSize: '11px',
-                              display: 'flex',
+                              display: 'inline-flex',
                               alignItems: 'center',
                               gap: '4px',
                               fontWeight: 700,
+                              borderRadius: '4px',
                             }}
-                            onClick={() => handleResendSignal(s.id)}
+                            onClick={(e) => {
+                              e.stopPropagation(); // Ngăn mở modal khi bấm gửi Telegram
+                              handleResendSignal(s.id);
+                            }}
                             disabled={isThisResending}
-                            title="Admin bấm gửi lại lệnh này lên Kênh Telegram"
+                            title="Bấm gửi lại tín hiệu này lên Kênh Telegram"
                           >
                             <Send size={11} />
-                            {isThisResending ? 'Đang gửi...' : 'Gửi lại Telegram'}
+                            {isThisResending ? 'Gửi...' : 'Tele'}
                           </button>
+
+                          <div
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#64748B',
+                              padding: '2px',
+                            }}
+                            title="Nhấn để xem phân tích chi tiết"
+                          >
+                            <ChevronRight size={16} />
+                          </div>
                         </div>
                       </td>
                     </tr>

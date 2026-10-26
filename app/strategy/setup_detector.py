@@ -61,6 +61,7 @@ class SetupType(Enum):
     SMC_FVG_RETEST = "SMC_FVG_RETEST"             # Retest Fair Value Gap (SMC)
     SMC_ORDER_BLOCK = "SMC_ORDER_BLOCK"           # Retest Order Block (SMC)
     SMC_LIQUIDITY_SWEEP = "SMC_LIQUIDITY_SWEEP"   # Bẫy quét thanh khoản (SMC)
+    PREDICTIVE_LIMIT = "PREDICTIVE_LIMIT"         # Kế hoạch dự đoán đón sóng từ xa (Limit Setup)
     NO_SETUP = "NO_SETUP"                         # Không có setup
 
 
@@ -73,9 +74,18 @@ class SetupCandidate:
     stop_loss: float
     take_profit: float
     take_profit_1: Optional[float] = None
+    invalidation_level: Optional[float] = None  # Mức giá làm vô hiệu hóa cấu trúc
+    setup_id: str = ""
     reasons: list[str] = field(default_factory=list)
     score_components: dict[str, float] = field(default_factory=dict)
     invalidation: str = ""
+
+    def __post_init__(self):
+        if not self.setup_id:
+            import uuid
+            self.setup_id = f"cand_{str(uuid.uuid4())[:8]}"
+        if self.invalidation_level is None and self.stop_loss:
+            self.invalidation_level = self.stop_loss
 
     @property
     def sl_distance(self) -> float:
@@ -207,6 +217,12 @@ def detect_setups(
     cand_rsi = _check_rsi_extreme(close, rsi, trend, higher_tf_trend, atr_value, structure)
     if cand_rsi:
         candidates.append(cand_rsi)
+
+    # ── 7. Predictive Setup: Dự đoán từ xa đón vùng cản SMC (Khi chưa có setup tức thì) ──
+    if not candidates:
+        cand_predictive = _check_predictive_limit_setups(close, df, structure, higher_tf_trend, atr_value, rsi)
+        if cand_predictive:
+            candidates.append(cand_predictive)
 
     log.debug(
         "Phát hiện %d setup candidates (trend=%s, rsi=%.1f)",
@@ -609,5 +625,150 @@ def _check_rsi_extreme(
             score_components={"rsi": 25, "resistance": 15, "trend": 10},
             invalidation=f"RSI tiếp tục tăng trên 80 + close trên {sl:.2f}",
         )
+
+    return None
+
+
+def _check_predictive_limit_setups(
+    close: float,
+    df: pd.DataFrame,
+    structure: MarketStructureResult,
+    higher_tf_trend: TrendDirection,
+    atr: float,
+    rsi: float,
+    min_dist_pts: float = 6.0,
+    max_dist_pts: float = 25.0,
+) -> Optional[SetupCandidate]:
+    """
+    Phát hiện Kế hoạch Dự Đoán Từ Xa (Predictive Limit Setup):
+    Quét các vùng Order Block chưa khai thác (Unmitigated OB) hoặc Support/Resistance then chốt
+    nằm cách xa giá hiện tại từ 6.0 đến 25.0 giá.
+
+    Cho phép Trader nhận tín hiệu kế hoạch đón trước 15-60 phút để đặt lệnh Limit
+    hoặc chuẩn bị đón sóng, tránh việc chỉ phát lệnh thị trường rồi vào lệnh ngay sau 3 giây.
+    """
+    if df is None or len(df) < 20:
+        return None
+
+    # 1. Quét Order Blocks trong 60 nến gần nhất
+    obs = detect_order_blocks(df, lookback_bars=60)
+    unmitigated_obs = [ob for ob in obs if not ob.is_mitigated]
+
+    # 2. Quét Support / Resistance Zones
+    supports = [
+        z for z in structure.sr_zones
+        if z.zone_type == "SUPPORT" and min_dist_pts <= (close - z.price) <= max_dist_pts
+    ]
+    resistances = [
+        z for z in structure.sr_zones
+        if z.zone_type == "RESISTANCE" and min_dist_pts <= (z.price - close) <= max_dist_pts
+    ]
+
+    # ── Kịch bản 1: BUY LIMIT (Canh mua đón đáy hỗ trợ / Demand Zone từ xa) ──
+    # Điều kiện: Xu hướng lớn H4 hoặc M5 là BULLISH/NEUTRAL (hoặc RSI không bị quá mua)
+    if (higher_tf_trend in (TrendDirection.BULLISH, TrendDirection.NEUTRAL)
+            or structure.trend == TrendDirection.BULLISH
+            or rsi < 55):
+        # Ưu tiên Bullish Order Block chưa khai thác
+        bull_obs = [
+            ob for ob in unmitigated_obs
+            if ob.ob_type == OBType.BULLISH and min_dist_pts <= (close - ob.high) <= max_dist_pts
+        ]
+        if bull_obs:
+            target_ob = bull_obs[0]
+            entry_p = round(target_ob.midpoint, 2)
+            dist = round(close - entry_p, 1)
+            sl, tp1, tp2 = compute_gold_sl_tp("BUY", entry_p, structure_level=target_ob.low, atr=atr)
+            reasons = [
+                f"🔮 DỰ ĐOÁN TỪ XA: Đón sóng hồi tại Unmitigated Bullish Order Block [{target_ob.low:.2f} - {target_ob.high:.2f}]",
+                f"Vùng đón cách giá hiện tại {dist:.1f} giá (Kế hoạch đón trước, không vào lệnh vội)",
+                f"Hợp lưu xu hướng H4 ({higher_tf_trend.value}) & Kỳ vọng bật tăng mạnh khi nến retest khối lệnh",
+            ]
+            return SetupCandidate(
+                setup_type=SetupType.PREDICTIVE_LIMIT,
+                direction="BUY",
+                entry_price=entry_p,
+                stop_loss=sl,
+                take_profit=tp2,
+                take_profit_1=tp1,
+                reasons=reasons,
+                score_components={"order_block": 30, "anticipation": 25, "trend": 20},
+                invalidation=f"Close thủng đáy Order Block {target_ob.low:.2f}",
+            )
+
+        elif supports:
+            target_sup = supports[0]
+            entry_p = round(target_sup.price, 2)
+            dist = round(close - entry_p, 1)
+            sl, tp1, tp2 = compute_gold_sl_tp("BUY", entry_p, structure_level=entry_p - 1.0, atr=atr)
+            reasons = [
+                f"🔮 DỰ ĐOÁN TỪ XA: Canh Buy Limit đón phản ứng tại Vùng Hỗ Trợ {target_sup.price:.2f}",
+                f"Vùng hỗ trợ cách giá hiện tại {dist:.1f} giá -> Cho phép Trader chủ động cài Limit trước",
+                f"Hợp lưu xu hướng H4 ({higher_tf_trend.value}) & Test lực cầu",
+            ]
+            return SetupCandidate(
+                setup_type=SetupType.PREDICTIVE_LIMIT,
+                direction="BUY",
+                entry_price=entry_p,
+                stop_loss=sl,
+                take_profit=tp2,
+                take_profit_1=tp1,
+                reasons=reasons,
+                score_components={"support": 25, "anticipation": 20, "trend": 20},
+                invalidation=f"Close phá vỡ hỗ trợ {target_sup.price - 1.0:.2f}",
+            )
+
+    # ── Kịch bản 2: SELL LIMIT (Canh bán đón đỉnh kháng cự / Supply Zone từ xa) ──
+    # Điều kiện: Xu hướng lớn H4 hoặc M5 là BEARISH/NEUTRAL (hoặc RSI không bị quá bán)
+    if (higher_tf_trend in (TrendDirection.BEARISH, TrendDirection.NEUTRAL)
+            or structure.trend == TrendDirection.BEARISH
+            or rsi > 45):
+        bear_obs = [
+            ob for ob in unmitigated_obs
+            if ob.ob_type == OBType.BEARISH and min_dist_pts <= (ob.low - close) <= max_dist_pts
+        ]
+        if bear_obs:
+            target_ob = bear_obs[0]
+            entry_p = round(target_ob.midpoint, 2)
+            dist = round(entry_p - close, 1)
+            sl, tp1, tp2 = compute_gold_sl_tp("SELL", entry_p, structure_level=target_ob.high, atr=atr)
+            reasons = [
+                f"🔮 DỰ ĐOÁN TỪ XA: Đón sóng phân phối tại Unmitigated Bearish Order Block [{target_ob.low:.2f} - {target_ob.high:.2f}]",
+                f"Vùng đón cách giá hiện tại {dist:.1f} giá (Kế hoạch đón trước, không vào lệnh vội)",
+                f"Hợp lưu xu hướng H4 ({higher_tf_trend.value}) & Kỳ vọng đảo chiều giảm khi chạm khối lệnh",
+            ]
+            return SetupCandidate(
+                setup_type=SetupType.PREDICTIVE_LIMIT,
+                direction="SELL",
+                entry_price=entry_p,
+                stop_loss=sl,
+                take_profit=tp2,
+                take_profit_1=tp1,
+                reasons=reasons,
+                score_components={"order_block": 30, "anticipation": 25, "trend": 20},
+                invalidation=f"Close vượt đỉnh Order Block {target_ob.high:.2f}",
+            )
+
+        elif resistances:
+            target_res = resistances[0]
+            entry_p = round(target_res.price, 2)
+            dist = round(entry_p - close, 1)
+            sl, tp1, tp2 = compute_gold_sl_tp("SELL", entry_p, structure_level=entry_p + 1.0, atr=atr)
+            reasons = [
+                f"🔮 DỰ ĐOÁN TỪ XA: Canh Sell Limit đón phản ứng tại Vùng Kháng Cự {target_res.price:.2f}",
+                f"Vùng kháng cự cách giá hiện tại {dist:.1f} giá -> Cho phép Trader chủ động cài Limit trước",
+                f"Hợp lưu xu hướng H4 ({higher_tf_trend.value}) & Test lực cung",
+            ]
+            return SetupCandidate(
+                setup_type=SetupType.PREDICTIVE_LIMIT,
+                direction="SELL",
+                entry_price=entry_p,
+                stop_loss=sl,
+                take_profit=tp2,
+                take_profit_1=tp1,
+                reasons=reasons,
+                score_components={"resistance": 25, "anticipation": 20, "trend": 20},
+                invalidation=f"Close phá vỡ kháng cự {target_res.price + 1.0:.2f}",
+            )
 
     return None

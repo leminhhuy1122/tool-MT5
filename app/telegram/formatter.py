@@ -32,6 +32,28 @@ def _to_vn_time_str(dt: Optional[datetime] = None) -> str:
     return vn_time.strftime("%H:%M %d/%m")
 
 
+def _render_score_bar(score: float) -> str:
+    """Vẽ thanh tiến trình trực quan cho Confluence Score (0-100)."""
+    blocks = max(0, min(10, int(round(score / 10.0))))
+    return "█" * blocks + "░" * (10 - blocks)
+
+
+def _format_breakdown_summary(score_breakdown: Optional[dict]) -> str:
+    """Tạo dòng tóm tắt ngắn gọn các yếu tố hội tụ (Tier, Session, Regime)."""
+    if not score_breakdown or not isinstance(score_breakdown, dict):
+        return ""
+    tier = score_breakdown.get("confidence_tier")
+    session = score_breakdown.get("session_name")
+    parts = []
+    if tier:
+        parts.append(f"Tier: <b>{tier}</b>")
+    if session and session != "DEFAULT":
+        parts.append(f"Phiên: <b>{session}</b>")
+    if parts:
+        return "\n📊 " + " | ".join(parts)
+    return ""
+
+
 def format_signal_message(signal: TradingSignal) -> str:
     """
     Định dạng tin nhắn tín hiệu ngắn gọn, trực quan và dễ vào lệnh.
@@ -62,6 +84,27 @@ def format_signal_message(signal: TradingSignal) -> str:
     # TP2 nếu có
     tp2_line = f"\n✅ <b>TP2:</b> <code>{signal.take_profit_2:.1f}</code>" if signal.take_profit_2 > 0 else ""
 
+    # Kế hoạch Dự Đoán Từ Xa (PREDICTIVE LIMIT SETUP)
+    if signal.setup_type == "PREDICTIVE_LIMIT":
+        reasons_bullet = "\n".join(f"• <i>{r}</i>" for r in signal.reasons[:3]) if signal.reasons else "• <i>Phân tích khối lệnh tổ chức & Vùng cản chưa kiểm định</i>"
+        return (
+            f"🔮 <b>KẾ HOẠCH DỰ ĐOÁN ĐÓN SÓNG TỪ XA ({action} LIMIT)</b>\n"
+            f"🎯 <b>{action} LIMIT {sym} @ <code>{signal.entry_price:.1f}</code></b>\n"
+            f"⏱ Khung: {signal.timeframe} | Mã: <code>#{signal.signal_id}</code>\n\n"
+            f"📍 <b>Vùng đón Entry:</b> <code>{signal.entry_zone_low:.1f} – {signal.entry_zone_high:.1f}</code>\n"
+            f"❌ <b>SL:</b> <code>{signal.stop_loss:.1f}</code> ({signal.sl_distance:.1f} giá)\n"
+            f"✅ <b>TP1:</b> <code>{signal.take_profit_1:.1f}</code> ({signal.tp_distance:.1f} giá)"
+            f"{tp2_line}\n"
+            f"⚖️ R:R: 1:{signal.risk_reward_ratio:.1f} | Điểm Confluence: <b>{signal.score:.0f}/100</b> [<code>{_render_score_bar(signal.score)}</code>] ({signal.confidence})"
+            f"{_format_breakdown_summary(signal.score_breakdown)}\n\n"
+            f"💡 <b>Lý do dự đoán từ xa:</b>\n{reasons_bullet}\n\n"
+            "👉 <b>Hướng dẫn cho Trader:</b>\n"
+            "• Kế hoạch đón trước — Chưa vào lệnh tại giá thị trường hiện tại.\n"
+            "• Trader có thể cài sẵn lệnh Limit hoặc đặt chuông cảnh báo giá.\n"
+            "• Khi giá về vùng đón, Bot sẽ gửi thông báo khớp lệnh!\n"
+            f"⏰ <i>{time_str} (VN) | {signal.strategy_version}</i>"
+        )
+
     # Setup tag
     setup_tag = f"• Setup: <code>{signal.setup_type}</code>" if signal.setup_type else ""
     invalidation_line = f"\n• Hủy setup nếu: <i>{signal.invalidation}</i>" if signal.invalidation else ""
@@ -72,7 +115,8 @@ def format_signal_message(signal: TradingSignal) -> str:
         f"❌ <b>SL:</b> <code>{signal.stop_loss:.1f}</code> ({signal.sl_distance:.1f} giá)\n"
         f"✅ <b>TP1:</b> <code>{signal.take_profit_1:.1f}</code> ({signal.tp_distance:.1f} giá)"
         f"{tp2_line}\n"
-        f"⚖️ R:R: 1:{signal.risk_reward_ratio:.1f} | Điểm: <b>{signal.score:.0f}/100</b> ({signal.confidence})\n\n"
+        f"⚖️ R:R: 1:{signal.risk_reward_ratio:.1f} | Điểm: <b>{signal.score:.0f}/100</b> [<code>{_render_score_bar(signal.score)}</code>] ({signal.confidence})"
+        f"{_format_breakdown_summary(signal.score_breakdown)}\n\n"
         "👉 <b>Lưu ý quản lý lệnh:</b>\n"
         "• Entry (điểm vào lệnh) ±1 giá.\n"
         "• Lãi 5 giá → Kéo SL về hòa vốn (BE).\n"
@@ -108,6 +152,14 @@ def format_signal_update(
     time_str = _to_vn_time_str()
 
     if signal.status == SignalStatus.ENTRY_REACHED:
+        if signal.setup_type == "PREDICTIVE_LIMIT":
+            return (
+                f"🎯 <b>ĐÃ KHỚP KẾ HOẠCH DỰ ĐOÁN TỪ XA! {action} {sym} @ <code>{price:.1f}</code></b> [<code>#{signal.signal_id}</code>]\n"
+                f"📍 Vùng đón: <code>{signal.entry_zone_low:.1f} – {signal.entry_zone_high:.1f}</code> đã được thị trường test chuẩn xác!\n"
+                f"❌ SL: <code>{signal.stop_loss:.1f}</code> | ✅ TP1: <code>{signal.take_profit_1:.1f}</code>\n"
+                "👉 Kế hoạch Limit đã chuyển thành Vị Thế Hoạt Động. Lãi 5 giá dời SL về BE!\n"
+                f"⏰ <i>{time_str} (VN)</i>"
+            )
         return (
             f"🎯 <b>KHỚP ENTRY: {action} {sym} @ <code>{price:.1f}</code></b> [<code>#{signal.signal_id}</code>]\n"
             f"❌ SL: <code>{signal.stop_loss:.1f}</code> | ✅ TP1: <code>{signal.take_profit_1:.1f}</code>\n"
@@ -175,6 +227,82 @@ def format_early_exit_alert(
         f"💡 <b>Khuyến nghị:</b> Cắt lỗ sớm quanh <code>{close_price:.2f}</code> để bảo toàn vốn thay vì chờ cắn đủ Hard SL <code>{signal.stop_loss:.2f}</code>!\n"
         f"🛡 <b>Tiết kiệm rủi ro:</b> Giảm thiểu được ~<code>{saved_pts:.1f} giá</code> (~{saved_pips:.0f} pips) lỗ so với SL 10 giá.\n"
         f"⏰ <i>{time_str} (VN) | Quản trị rủi ro chủ động</i>"
+    )
+
+
+def format_momentum_exhaustion_alert(
+    signal: TradingSignal,
+    current_price: float,
+    pnl_points: float,
+    exhaustion_reason: str,
+) -> str:
+    """
+    Định dạng cảnh báo động lượng suy yếu / nến từ chối (Rejection Wick / Exhaustion) khi lệnh đang có lãi.
+    Khuyến nghị chốt lời chủ động (Early Profit Take) thay vì gồng về hòa vốn.
+    """
+    action = signal.direction.value.upper()
+    sym = "Gold" if "XAU" in signal.symbol.upper() else signal.symbol
+    time_str = _to_vn_time_str()
+    pnl_pips = round(pnl_points * 10.0, 1)
+
+    return (
+        f"⚡ <b>CẢNH BÁO ĐỘNG LƯỢNG SUY YẾU (CHỐT LÃI SỚM): {action} {sym}</b> [<code>#{signal.signal_id}</code>]\n\n"
+        f"💰 <b>Lãi hiện tại:</b> <code>+{pnl_points:.2f} giá</code> (+{pnl_pips:.1f} pips) @ <code>{current_price:.2f}</code>\n"
+        f"🔍 <b>Tín hiệu suy yếu:</b> {exhaustion_reason}\n\n"
+        f"💡 <b>Khuyến nghị chốt lời chủ động:</b>\n"
+        f"  • Chốt lời <b>50% – 70%</b> vị thế quanh <code>{current_price:.2f}</code> để bỏ túi lợi nhuận chắc chắn!\n"
+        f"  • Phần còn lại giữ SL tại <code>{signal.stop_loss:.2f}</code> (Đã kéo hòa vốn) để gồng nuôi TP2 an toàn.\n"
+        f"⏰ <i>{time_str} (VN) | Quản lý lợi nhuận thông minh</i>"
+    )
+
+
+def format_time_stagnation_alert(
+    signal: TradingSignal,
+    current_price: float,
+    pnl_points: float,
+    minutes_open: int,
+) -> str:
+    """
+    Định dạng cảnh báo lệnh ứ đọng (Time Decay) khi lệnh ngâm lâu mà không bứt phá tới TP.
+    """
+    action = signal.direction.value.upper()
+    sym = "Gold" if "XAU" in signal.symbol.upper() else signal.symbol
+    time_str = _to_vn_time_str()
+    pnl_pips = round(pnl_points * 10.0, 1)
+
+    return (
+        f"⏳ <b>CẢNH BÁO LỆNH Ứ ĐỌNG (TIME DECAY): {action} {sym}</b> [<code>#{signal.signal_id}</code>]\n\n"
+        f"⏱ <b>Thời gian ngâm lệnh:</b> <code>{minutes_open} phút</code> (~{minutes_open // 5} cây nến M5)\n"
+        f"💰 <b>Lãi hiện tại:</b> <code>+{pnl_points:.2f} giá</code> (+{pnl_pips:.1f} pips) @ <code>{current_price:.2f}</code>\n"
+        f"⚠️ <b>Hiện tượng:</b> Giá dao động đi ngang trong biên độ hẹp, lực đẩy về phía TP1 (<code>{signal.take_profit_1:.2f}</code>) đã chững lại.\n\n"
+        f"💡 <b>Khuyến nghị:</b> Nên chốt lãi đút túi quanh <code>{current_price:.2f}</code> hoặc kéo SL sát về <code>{signal.entry_price:.2f}</code>, tránh giữ lệnh qua phiên giao dịch tiếp theo.\n"
+        f"⏰ <i>{time_str} (VN) | Kỷ luật quản lý vốn</i>"
+    )
+
+
+def format_trailing_stop_update(
+    signal: TradingSignal,
+    current_price: float,
+    old_sl: float,
+    new_sl: float,
+    locked_points: float,
+) -> str:
+    """
+    Định dạng thông báo tự động nâng Stop Loss theo Trailing Stop để khóa lợi nhuận.
+    """
+    action = signal.direction.value.upper()
+    sym = "Gold" if "XAU" in signal.symbol.upper() else signal.symbol
+    time_str = _to_vn_time_str()
+    locked_pips = round(locked_points * 10.0, 1)
+
+    return (
+        f"🛡️ <b>BẢO VỆ LỢI NHUẬN (TRAILING STOP): {action} {sym}</b> [<code>#{signal.signal_id}</code>]\n\n"
+        f"📈 <b>Giá thị trường:</b> <code>{current_price:.2f}</code> (Đang trong sóng sinh lời)\n"
+        f"🔄 <b>Dời Stop Loss:</b> <code>{old_sl:.2f}</code> ➔ <code>{new_sl:.2f}</code>\n"
+        f"🔒 <b>Khóa lợi nhuận an toàn:</b> Tối thiểu <b>+{locked_points:.2f} giá</b> (+{locked_pips:.1f} pips)\n"
+        f"🎯 <b>Mục tiêu TP2 tiếp theo:</b> <code>{signal.take_profit_2:.2f}</code>\n"
+        f"💡 <i>Nếu giá bất ngờ quay đầu, lệnh vẫn kết thúc với LÃI LỚN tại {new_sl:.2f}!</i>\n"
+        f"⏰ <i>{time_str} (VN) | Dynamic Trailing Protection</i>"
     )
 
 
@@ -373,5 +501,37 @@ def format_trade_outcome_summary(
         "🏆 <i>VietKey Gold AI Terminal — Quản trị rủi ro định lượng</i>",
     ])
 
+    return "\n".join(lines)
+
+
+def format_scaled_exit_alert(
+    signal: TradingSignal,
+    current_price: float,
+    tier_name: str,
+    close_ratio: float,
+    pnl_points: float,
+    pnl_r: float,
+    new_sl: Optional[float] = None,
+) -> str:
+    """
+    Định dạng tin nhắn cảnh báo chốt lời từng phần (Tier 1: 50% / Tier 2: 30%) và bảo vệ phần còn lại.
+    """
+    action = signal.direction.value.upper()
+    sym = "Gold" if "XAU" in signal.symbol.upper() else signal.symbol
+    time_str = _to_vn_time_str()
+    pnl_pips = round(pnl_points * 10.0, 1)
+    close_percent = int(close_ratio * 100)
+
+    lines = [
+        f"🎯 <b>KHUYẾN NGHỊ CHỐT LỜI TỪNG PHẦN ({tier_name}): {action} {sym}</b> [<code>#{signal.signal_id}</code>]\n",
+        f"📊 <b>Giá hiện tại:</b> <code>{current_price:.2f}</code> | Lợi nhuận: <b>+{pnl_points:.2f} giá</b> (+{pnl_pips:.1f} pips | <b>+{pnl_r:.1f}R</b>)",
+        f"💰 <b>Hành động khuyến nghị:</b> Đóng <b>{close_percent}% khối lượng</b> để hiện thực hóa lợi nhuận!",
+    ]
+    if new_sl is not None:
+        lines.append(f"🛡️ <b>Bảo vệ vốn:</b> Dời Stop Loss về <code>{new_sl:.2f}</code> (Khóa hòa vốn bù phí sàn).")
+    lines.extend([
+        f"🏃 <b>Khối lượng còn lại:</b> Tiếp tục thả trôi nuôi sóng lớn tới mục tiêu TP tiếp theo.",
+        f"⏰ <i>{time_str} (VN) | VietKey Scaled Profit Engine</i>",
+    ])
     return "\n".join(lines)
 

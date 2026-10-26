@@ -59,6 +59,8 @@ data/*.db*
 data/*.sqlite*
 data/backups/
 scratch/
+*.lock
+.vietkey_runner.lock
 
 # Jupyter & MyPy
 .ipynb_checkpoints/
