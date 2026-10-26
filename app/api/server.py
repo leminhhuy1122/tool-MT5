@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import json
 import os
 import sys
+import threading
 import time
 
 from fastapi import FastAPI, HTTPException
@@ -59,6 +60,25 @@ news_manager = NewsManager()
 notifier = TelegramNotifier(settings.telegram)
 ai_writer = AINewsWriter(settings.openai)
 
+# Background Live Bot Runner Loop
+bot_runner = None
+runner_thread = None
+runner_stop_event = threading.Event()
+
+
+def bot_runner_worker():
+    """Vòng lặp chạy ngầm tự động phân tích và bám sát giá của bot."""
+    global bot_runner, runner_stop_event
+    log.info("Khởi chạy LiveBotRunner background worker...")
+    time.sleep(2.0)
+    while not runner_stop_event.is_set():
+        try:
+            if bot_runner:
+                bot_runner.run_once()
+        except Exception as e:
+            log.debug("Lỗi trong chu kỳ bot runner worker: %s", e)
+        runner_stop_event.wait(5.0)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -93,10 +113,39 @@ async def lifespan(app: FastAPI):
         default_timeframe="M5",
     )
 
+    # 4. Khởi tạo và kích hoạt Live Bot Runner tự động ngầm
+    global bot_runner, runner_thread, runner_stop_event
+    try:
+        from app.bot.runner import LiveBotRunner
+        bot_runner = LiveBotRunner(
+            settings=settings,
+            db_manager=db_manager,
+            connector=connector,
+            notifier=notifier,
+            news_manager=news_manager,
+        )
+        bot_runner.start()
+        runner_stop_event.clear()
+        runner_thread = threading.Thread(
+            target=bot_runner_worker,
+            daemon=True,
+            name="LiveBotRunnerWorker",
+        )
+        runner_thread.start()
+        log.info("✓ LiveBotRunner background worker đã kích hoạt tự động!")
+    except Exception as e:
+        log.error("Không thể khởi động LiveBotRunner: %s", e)
+
     yield
 
     # Cleanup khi shutdown
     log.info("Đang tắt VietKey Gold AI API Server...")
+    runner_stop_event.set()
+    if bot_runner:
+        try:
+            bot_runner.stop()
+        except Exception:
+            pass
     if connector and connector.is_connected:
         connector.disconnect()
 
