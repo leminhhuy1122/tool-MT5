@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Sidebar } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
 import { LatestSignals } from './components/overview/LatestSignals';
+import { LiveOpenPositions } from './components/overview/LiveOpenPositions';
 import { MarketOverview } from './components/overview/MarketOverview';
 import { PerformanceSummary } from './components/overview/PerformanceSummary';
 import { StatusCards } from './components/overview/StatusCards';
@@ -248,9 +249,18 @@ export const App: React.FC = () => {
                 <MarketOverview data={marketOverview} />
               </div>
 
+              {/* Vị Thế Đang Khớp Lệnh & PnL Thả Nổi Real-time (Pips & Giá) */}
+              <LiveOpenPositions
+                signals={signals}
+                currentPrice={statusCards.currentPrice || marketOverview.price}
+              />
+
               {/* Signals and Telemetry Grid */}
               <div className="grid-2col">
-                <LatestSignals signals={signals} />
+                <LatestSignals
+                  signals={signals}
+                  currentPrice={statusCards.currentPrice || marketOverview.price}
+                />
                 <div className="telemetry-stack">
                   <PerformanceSummary data={performance} />
                   <SystemMonitoringWidget data={systemMetrics} />

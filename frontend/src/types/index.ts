@@ -8,6 +8,7 @@ export type SignalDirection = 'BUY' | 'SELL' | 'WAIT';
 export type SignalStatus = 
   | 'PENDING'
   | 'ACTIVE'
+  | 'ENTRY_REACHED'
   | 'TP_REACHED'
   | 'SL_REACHED'
   | 'INVALIDATED'
@@ -97,6 +98,10 @@ export interface PerformanceData {
   maxDrawdownCash: number;
   byStrategy: PerformanceStrategyItem[];
   hasRealData: boolean;
+  winsCount?: number;
+  lossesCount?: number;
+  netPoints?: number;
+  netPips?: number;
 }
 
 export interface SystemMonitoringData {

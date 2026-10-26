@@ -429,7 +429,9 @@ def get_performance_stats():
                     SUM(CASE WHEN pnl_points > 0 THEN 1 ELSE 0 END) as wins,
                     SUM(CASE WHEN pnl_points < 0 THEN 1 ELSE 0 END) as losses,
                     AVG(pnl_r) as avg_r,
-                    SUM(pnl_points) as net_points
+                    SUM(pnl_points) as net_points,
+                    SUM(CASE WHEN pnl_points > 0 THEN pnl_points ELSE 0 END) as total_profit,
+                    SUM(CASE WHEN pnl_points < 0 THEN ABS(pnl_points) ELSE 0 END) as total_loss
                 FROM signal_outcomes
             """)
             row = cursor.fetchone()
@@ -444,6 +446,10 @@ def get_performance_stats():
                     "profitFactor": 0.0,
                     "maxDrawdownPct": 0.0,
                     "maxDrawdownCash": 0.0,
+                    "winsCount": 0,
+                    "lossesCount": 0,
+                    "netPoints": 0.0,
+                    "netPips": 0.0,
                     "byStrategy": [],
                     "message": "No performance data available.",
                 }
@@ -454,6 +460,16 @@ def get_performance_stats():
             win_rate = (wins / total * 100) if total > 0 else 0.0
             loss_rate = (losses / total * 100) if total > 0 else 0.0
             avg_r = float(row["avg_r"] or 0.0)
+            total_profit = float(row["total_profit"] or 0.0)
+            total_loss = float(row["total_loss"] or 0.0)
+            net_points = float(row["net_points"] or 0.0)
+            net_pips = round(net_points * 10.0, 1)
+
+            # Công thức Profit Factor chuẩn tài chính
+            if total_loss > 0:
+                profit_factor = round(total_profit / total_loss, 2)
+            else:
+                profit_factor = 2.0 if wins > 0 else 0.0
 
             return {
                 "hasRealData": True,
@@ -462,11 +478,15 @@ def get_performance_stats():
                 "lossRate": round(loss_rate, 1),
                 "unresolvedSignals": 0,
                 "averageR": round(avg_r, 2),
-                "profitFactor": 2.0 if wins > losses else 0.0,
+                "profitFactor": profit_factor,
                 "maxDrawdownPct": 0.0,
                 "maxDrawdownCash": 0.0,
+                "winsCount": wins,
+                "lossesCount": losses,
+                "netPoints": round(net_points, 2),
+                "netPips": net_pips,
                 "byStrategy": [
-                    {"name": "v1.0-M5", "total": total, "winRate": round(win_rate, 1), "pf": 2.0}
+                    {"name": "v1.0-M5", "total": total, "winRate": round(win_rate, 1), "pf": profit_factor}
                 ],
             }
     except Exception as e:

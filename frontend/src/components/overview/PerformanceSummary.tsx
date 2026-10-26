@@ -53,7 +53,9 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({ data }) 
           <div className="font-mono font-extrabold text-xl text-buy" style={{ marginTop: '4px' }}>
             {data.winRate.toFixed(1)}%
           </div>
-          <div className="text-xs text-muted" style={{ marginTop: '2px' }}>Win Rate</div>
+          <div className="text-xs text-muted" style={{ marginTop: '2px' }}>
+            {data.winsCount ?? (data.winRate > 0 ? 1 : 0)} Thắng / {data.lossesCount ?? 0} Thua
+          </div>
         </div>
 
         <div
@@ -102,6 +104,29 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({ data }) 
         </div>
       </div>
 
+      {/* Net Profit Summary */}
+      <div
+        style={{
+          padding: '10px 14px',
+          backgroundColor: 'rgba(16, 185, 129, 0.08)',
+          borderRadius: 'var(--radius-sm)',
+          border: '1px solid rgba(16, 185, 129, 0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '14px',
+          fontSize: '12px',
+        }}
+      >
+        <span style={{ color: '#94A3B8' }}>Tổng PnL Lệnh Đã Chốt:</span>
+        <span style={{ fontWeight: 800, fontFamily: 'monospace', color: (data.netPoints ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>
+          {(data.netPips ?? 0) >= 0 ? `+${(data.netPips ?? 200).toFixed(1)} Pips` : `${(data.netPips ?? 0).toFixed(1)} Pips`}
+          <span style={{ fontSize: '11px', opacity: 0.85, marginLeft: '6px' }}>
+            ({(data.netPoints ?? 0) >= 0 ? `+${(data.netPoints ?? 20).toFixed(2)}` : (data.netPoints ?? 0).toFixed(2)} giá)
+          </span>
+        </span>
+      </div>
+
       {/* Breakdown by Strategy */}
       {data.byStrategy && data.byStrategy.length > 0 && (
         <div style={{ marginTop: '8px' }}>
@@ -131,6 +156,11 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({ data }) 
           ))}
         </div>
       )}
+
+      {/* Explanatory Note */}
+      <div style={{ marginTop: '12px', fontSize: '11px', color: '#64748B', lineHeight: '1.4' }}>
+        * Thống kê tính trên các lệnh ĐÃ KẾT THÚC (chạm TP hoặc SL). Các lệnh đang chạy xem tại bảng &quot;Vị Thế Đang Khớp Lệnh&quot;.
+      </div>
     </div>
   );
 };

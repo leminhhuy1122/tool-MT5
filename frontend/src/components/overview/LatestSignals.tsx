@@ -15,9 +15,10 @@ import { api } from '../../services/api';
 
 interface LatestSignalsProps {
   signals: SignalItem[];
+  currentPrice?: number;
 }
 
-export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals }) => {
+export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPrice }) => {
   const [selectedSignal, setSelectedSignal] = useState<SignalItem | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [directionFilter, setDirectionFilter] = useState<'ALL' | SignalDirection | 'ACTIVE'>('ALL');
@@ -317,18 +318,65 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals }) => {
                         <span className="text-xs text-muted">/100</span>
                       </td>
                       <td>
-                        <span
-                          className={`status-pill ${
-                            s.status === 'ACTIVE'
-                              ? 'connected'
-                              : s.status === 'TP_REACHED'
-                              ? 'connected'
-                              : 'standby'
-                          }`}
-                          style={{ padding: '2px 8px', fontSize: '10px' }}
-                        >
-                          {s.status}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span
+                            className={`status-pill ${
+                              s.status === 'ENTRY_REACHED' || s.status === 'TP_REACHED'
+                                ? 'connected'
+                                : s.status === 'ACTIVE'
+                                ? 'warning'
+                                : 'standby'
+                            }`}
+                            style={{
+                              padding: '2px 8px',
+                              fontSize: '10px',
+                              fontWeight: 800,
+                              backgroundColor:
+                                s.status === 'ENTRY_REACHED'
+                                  ? 'rgba(16, 185, 129, 0.2)'
+                                  : s.status === 'ACTIVE'
+                                  ? 'rgba(245, 158, 11, 0.2)'
+                                  : undefined,
+                              color:
+                                s.status === 'ENTRY_REACHED'
+                                  ? '#10B981'
+                                  : s.status === 'ACTIVE'
+                                  ? '#F59E0B'
+                                  : undefined,
+                              border:
+                                s.status === 'ENTRY_REACHED'
+                                  ? '1px solid rgba(16, 185, 129, 0.4)'
+                                  : s.status === 'ACTIVE'
+                                  ? '1px solid rgba(245, 158, 11, 0.4)'
+                                  : undefined,
+                            }}
+                          >
+                            {s.status === 'ENTRY_REACHED' ? 'KHỚP ENTRY' : s.status === 'ACTIVE' ? 'CHỜ ENTRY' : s.status}
+                          </span>
+
+                          {/* Hiển thị số Pips lời/lỗ thả nổi nếu lệnh đang khớp ENTRY_REACHED */}
+                          {s.status === 'ENTRY_REACHED' && currentPrice && currentPrice > 0 && (
+                            (() => {
+                              const entryPrice = s.plannedEntry || (s.entryZone[0] + s.entryZone[1]) / 2;
+                              const pnlPoints = s.direction === 'SELL' ? entryPrice - currentPrice : currentPrice - entryPrice;
+                              const pnlPips = pnlPoints * 10;
+                              const isProf = pnlPoints >= 0;
+                              return (
+                                <span
+                                  style={{
+                                    fontSize: '10px',
+                                    fontWeight: 800,
+                                    fontFamily: 'monospace',
+                                    color: isProf ? '#10B981' : '#EF4444',
+                                  }}
+                                  title={`Giá khớp: ${entryPrice.toFixed(2)} | Giá hiện tại: ${currentPrice.toFixed(2)}`}
+                                >
+                                  {isProf ? `+${pnlPips.toFixed(1)}p` : `${pnlPips.toFixed(1)}p`} ({isProf ? `+${pnlPoints.toFixed(2)}` : pnlPoints.toFixed(2)})
+                                </span>
+                              );
+                            })()
+                          )}
+                        </div>
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
