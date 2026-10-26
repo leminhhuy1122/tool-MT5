@@ -167,3 +167,74 @@ class TestTelegramFormatter:
         assert "4000.42" in text
         assert "4003.34" in text
         assert "Giảm thiểu được" in text
+
+    def test_format_trade_outcome_summary_profit(self):
+        """Kiểm tra format tổng hợp kết quả lệnh có lãi."""
+        from app.telegram.formatter import format_trade_outcome_summary
+        sig = _make_buy_signal()
+        stats = {
+            "total": 5,
+            "wins": 4,
+            "losses": 1,
+            "win_rate": 80.0,
+            "profit_factor": 3.5,
+            "net_pips": 450.0,
+            "net_points": 45.0,
+        }
+        text = format_trade_outcome_summary(
+            signal_or_data=sig,
+            exit_price=2020.0,
+            pnl_points=20.0,
+            duration_str="45 phút",
+            stats=stats,
+        )
+
+        assert "TỔNG HỢP LỆNH VỪA KHỚP: CHỐT LÃI (+200.0 PIPS)" in text
+        assert "LÃI +200.0 PIPS (+20.00 GIÁ)" in text
+        assert "+$200.00 (0.1 lot)" in text
+        assert "+$2,000.00 (1.0 lot)" in text
+        assert "45 phút" in text
+        assert "Winrate" in text
+        assert "80.0%" in text
+        assert "+450.0 Pips" in text
+
+    def test_format_trade_outcome_summary_loss(self):
+        """Kiểm tra format tổng hợp kết quả lệnh bị lỗ."""
+        from app.telegram.formatter import format_trade_outcome_summary
+        sig = _make_buy_signal()
+        sig.direction = SignalDirection.SELL
+        sig.entry_price = 4019.90
+        sig.stop_loss = 4006.62
+        text = format_trade_outcome_summary(
+            signal_or_data=sig,
+            exit_price=4006.62,
+            pnl_points=-13.28,
+            duration_str="1h 20m",
+        )
+
+        assert "TỔNG HỢP LỆNH VỪA KHỚP: CẮT LỖ (-132.8 PIPS)" in text
+        assert "LỖ -132.8 PIPS (-13.28 GIÁ)" in text
+        assert "-$132.80 (0.1 lot)" in text
+        assert "-$1,328.00 (1.0 lot)" in text
+        assert "1h 20m" in text
+
+    def test_format_trade_outcome_summary_dict(self):
+        """Kiểm tra format khi truyền dict từ SQLite."""
+        from app.telegram.formatter import format_trade_outcome_summary
+        data = {
+            "signal_id": "test_dict_01",
+            "symbol": "XAUUSD",
+            "direction": "BUY",
+            "entry_price": 2650.0,
+            "stop_loss": 2640.0,
+            "take_profit_1": 2670.0,
+            "risk_reward_ratio": 2.0,
+        }
+        text = format_trade_outcome_summary(
+            signal_or_data=data,
+            exit_price=2670.0,
+            pnl_points=20.0,
+        )
+        assert "#test_dict_01" in text
+        assert "CHỐT LÃI (+200.0 PIPS)" in text
+

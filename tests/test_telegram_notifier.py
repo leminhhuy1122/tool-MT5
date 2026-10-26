@@ -229,3 +229,33 @@ class TestTelegramNotifier:
         assert "THÔNG BÁO TỪ BAN QUẢN TRỊ" in msg_arg
         assert "Cảnh báo biến động mạnh" in msg_arg
 
+    def test_send_trade_outcome_summary(self):
+        """Bắn thông báo tổng hợp kết quả lệnh lên Telegram kèm pips và stats."""
+        mock_client = MagicMock(spec=TelegramClient)
+        mock_client.is_configured = True
+        mock_client.send_message.return_value = TelegramResponse(ok=True, message_id=808)
+        notifier = TelegramNotifier(client=mock_client)
+
+        sig = _make_signal(signal_id="outcome_test_01")
+        res = notifier.send_trade_outcome_summary(
+            signal_or_data=sig,
+            exit_price=2020.0,
+            pnl_points=20.0,
+            duration_str="30 phút",
+            stats={"total": 2, "wins": 2, "losses": 0, "win_rate": 100.0, "profit_factor": 5.0, "net_pips": 400.0, "net_points": 40.0},
+        )
+        assert res is True
+        mock_client.send_message.assert_called_once()
+        msg_arg = mock_client.send_message.call_args[0][0]
+        assert "TỔNG HỢP LỆNH VỪA KHỚP: CHỐT LÃI (+200.0 PIPS)" in msg_arg
+        assert "+200.0 PIPS" in msg_arg
+
+        # Kiểm tra chống gửi lặp (deduplication)
+        res_dup = notifier.send_trade_outcome_summary(
+            signal_or_data=sig,
+            exit_price=2020.0,
+            pnl_points=20.0,
+        )
+        assert res_dup is True
+        assert mock_client.send_message.call_count == 1  # Không gửi lần 2 vì bị chặn duplicate
+

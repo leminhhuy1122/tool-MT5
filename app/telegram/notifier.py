@@ -11,7 +11,7 @@ Bộ điều phối thông báo Telegram:
 """
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from app.strategy.signal_models import SignalDirection, SignalStatus, TradingSignal
 from app.telegram.client import TelegramClient, TelegramResponse
@@ -22,6 +22,7 @@ from app.telegram.formatter import (
     format_signal_message,
     format_signal_update,
     format_system_notification,
+    format_trade_outcome_summary,
 )
 from config import TelegramConfig
 from logger import get_logger
@@ -321,6 +322,65 @@ class TelegramNotifier:
         else:
             self.total_failed += 1
             log.error("✗ Gửi bài viết tới Telegram thất bại: %s", resp.description)
+            return False
+
+    def send_trade_outcome_summary(
+        self,
+        signal_or_data: Any,
+        exit_price: float,
+        pnl_points: float,
+        duration_str: Optional[str] = None,
+        stats: Optional[dict] = None,
+        force: bool = False,
+    ) -> bool:
+        """
+        Gửi thông báo tổng hợp kết quả lệnh vừa khớp/vừa đóng (Lời/Lỗ bao nhiêu Pip) lên Telegram.
+
+        Args:
+            signal_or_data: TradingSignal hoặc dict chứa thông tin lệnh.
+            exit_price: Mức giá đóng lệnh thực tế.
+            pnl_points: Số điểm lãi/lỗ (+ hoặc -).
+            duration_str: Chuỗi thời gian nắm giữ lệnh (ví dụ '45 phút').
+            stats: Thống kê hiệu suất tài khoản tích lũy (winrate, net pips, PF...).
+            force: Bỏ qua kiểm tra trùng lặp nếu True.
+
+        Returns:
+            True nếu gửi thành công.
+        """
+        if not self.is_enabled and not force:
+            log.debug("TelegramNotifier đang tắt hoặc chưa cấu hình.")
+            return False
+
+        if hasattr(signal_or_data, "signal_id"):
+            sig_id = signal_or_data.signal_id
+        elif isinstance(signal_or_data, dict):
+            sig_id = signal_or_data.get("signal_id", "unknown")
+        else:
+            sig_id = "unknown"
+
+        key = f"{sig_id}_OUTCOME_SUMMARY"
+        if not force and key in self._sent_keys:
+            log.info("Trùng lặp: Thông báo tổng hợp lệnh [%s] đã được gửi trước đó.", sig_id)
+            return True
+
+        text = format_trade_outcome_summary(
+            signal_or_data=signal_or_data,
+            exit_price=exit_price,
+            pnl_points=pnl_points,
+            duration_str=duration_str,
+            stats=stats,
+        )
+        resp: TelegramResponse = self.client.send_message(text)
+
+        if resp.ok:
+            self._sent_keys.add(key)
+            self.total_sent += 1
+            log.info("✓ Đã gửi thông báo tổng hợp kết quả lệnh [%s] (PnL: %.2f pts) tới Telegram.",
+                     sig_id, pnl_points)
+            return True
+        else:
+            self.total_failed += 1
+            log.error("✗ Gửi thông báo tổng hợp kết quả [%s] thất bại: %s", sig_id, resp.description)
             return False
 
     def clear_cache(self) -> None:

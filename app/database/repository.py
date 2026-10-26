@@ -242,6 +242,73 @@ class SignalRepository:
             cursor = conn.execute("SELECT COUNT(*) FROM signals;")
             return cursor.fetchone()[0]
 
+    def get_latest_outcome(self) -> Optional[dict]:
+        """Lấy kết quả của lệnh vừa kết thúc/khớp gần đây nhất kèm chi tiết signal."""
+        sql = """
+        SELECT o.*, s.symbol, s.direction, s.entry_price, s.stop_loss, 
+               s.take_profit_1, s.take_profit_2, s.created_at as signal_created_at,
+               s.timeframe, s.score, s.strategy_version, s.risk_reward_ratio
+        FROM signal_outcomes o
+        JOIN signals s ON o.signal_id = s.signal_id
+        ORDER BY o.id DESC
+        LIMIT 1;
+        """
+        with self.db.session() as conn:
+            cursor = conn.execute(sql)
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_performance_summary(self) -> dict:
+        """Lấy thống kê tổng hợp hiệu suất (Wins, Losses, Winrate, Net Points, Net Pips, Profit Factor)."""
+        sql = """
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN pnl_points > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN pnl_points < 0 THEN 1 ELSE 0 END) as losses,
+            AVG(pnl_r) as avg_r,
+            SUM(pnl_points) as net_points,
+            SUM(CASE WHEN pnl_points > 0 THEN pnl_points ELSE 0 END) as total_profit,
+            SUM(CASE WHEN pnl_points < 0 THEN ABS(pnl_points) ELSE 0 END) as total_loss
+        FROM signal_outcomes;
+        """
+        with self.db.session() as conn:
+            cursor = conn.execute(sql)
+            row = cursor.fetchone()
+            if not row or row["total"] == 0:
+                return {
+                    "total": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "win_rate": 0.0,
+                    "loss_rate": 0.0,
+                    "net_points": 0.0,
+                    "net_pips": 0.0,
+                    "profit_factor": 0.0,
+                }
+            total = int(row["total"])
+            wins = int(row["wins"] or 0)
+            losses = int(row["losses"] or 0)
+            win_rate = (wins / total * 100) if total > 0 else 0.0
+            loss_rate = (losses / total * 100) if total > 0 else 0.0
+            net_points = float(row["net_points"] or 0.0)
+            net_pips = round(net_points * 10.0, 1)
+            total_profit = float(row["total_profit"] or 0.0)
+            total_loss = float(row["total_loss"] or 0.0)
+            if total_loss > 0:
+                pf = round(total_profit / total_loss, 2)
+            else:
+                pf = 2.0 if wins > 0 else 0.0
+            return {
+                "total": total,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(win_rate, 1),
+                "loss_rate": round(loss_rate, 1),
+                "net_points": round(net_points, 2),
+                "net_pips": net_pips,
+                "profit_factor": pf,
+            }
+
 
 class MarketDataRepository:
     """Repository quản lý nến lịch sử đa khung thời gian."""

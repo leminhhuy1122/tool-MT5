@@ -178,6 +178,32 @@ class TestSignalRepository:
         repo.save_signal(_make_signal("sig2"))
         assert repo.count_signals() == 2
 
+    def test_get_latest_outcome_and_performance_summary(self, test_db):
+        """Kiểm tra lấy outcome mới nhất và tổng hợp hiệu suất."""
+        repo = SignalRepository(test_db)
+        sig1 = _make_signal("sig_w1", direction=SignalDirection.BUY)
+        sig2 = _make_signal("sig_l1", direction=SignalDirection.SELL)
+        repo.save_signal(sig1)
+        repo.save_signal(sig2)
+
+        repo.save_outcome(signal_id="sig_w1", final_status="TP_REACHED", exit_price=2020.0, pnl_points=20.0, duration_seconds=1800)
+        repo.save_outcome(signal_id="sig_l1", final_status="SL_REACHED", exit_price=2010.0, pnl_points=-10.0, duration_seconds=3600)
+
+        latest = repo.get_latest_outcome()
+        assert latest is not None
+        assert latest["signal_id"] == "sig_l1"
+        assert latest["pnl_points"] == -10.0
+        assert latest["direction"] == "SELL"
+
+        summary = repo.get_performance_summary()
+        assert summary["total"] == 2
+        assert summary["wins"] == 1
+        assert summary["losses"] == 1
+        assert summary["win_rate"] == 50.0
+        assert summary["net_points"] == 10.0
+        assert summary["net_pips"] == 100.0
+        assert summary["profit_factor"] == 2.0
+
 
 class TestMarketDataRepository:
     """Test suite cho MarketDataRepository."""

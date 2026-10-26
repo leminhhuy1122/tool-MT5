@@ -165,12 +165,41 @@ class LiveBotRunner:
                 self.signal_repo.update_status(sig.signal_id, sig.status)
                 if sig.status in (SignalStatus.TP_REACHED, SignalStatus.SL_REACHED):
                     pnl_pts = (current_price - sig.entry_price) if sig.direction == SignalDirection.BUY else (sig.entry_price - current_price)
+                    diff_sec = None
+                    duration_str = None
+                    if sig.created_at:
+                        c_time = sig.created_at if sig.created_at.tzinfo else sig.created_at.replace(tzinfo=timezone.utc)
+                        diff_sec = int((now_utc - c_time).total_seconds())
+                        mins = max(1, diff_sec // 60)
+                        if mins < 60:
+                            duration_str = f"{mins} phút"
+                        else:
+                            duration_str = f"{mins // 60}h {mins % 60}m"
+
                     self.signal_repo.save_outcome(
                         signal_id=sig.signal_id,
                         final_status=sig.status.value,
                         exit_price=current_price,
                         pnl_points=round(pnl_pts, 2),
+                        duration_seconds=diff_sec,
                     )
+
+                    # Lấy thống kê hiệu suất tích lũy sau lệnh vừa đóng
+                    perf_stats = None
+                    try:
+                        perf_stats = self.signal_repo.get_performance_summary()
+                    except Exception as e:
+                        log.debug("Lỗi lấy perf stats: %s", e)
+
+                    # Bắn thông báo tổng hợp kết quả (Lời/Lỗ bao nhiêu Pip) lên Telegram
+                    if self.notifier and self.notifier.is_enabled:
+                        self.notifier.send_trade_outcome_summary(
+                            signal_or_data=sig,
+                            exit_price=current_price,
+                            pnl_points=pnl_pts,
+                            duration_str=duration_str,
+                            stats=perf_stats,
+                        )
 
                 # Gửi thông báo cập nhật qua Telegram
                 self.notifier.notify_status_update(sig, current_price)

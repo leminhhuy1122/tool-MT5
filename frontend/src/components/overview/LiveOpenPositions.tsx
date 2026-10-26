@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Activity,
   ArrowDownRight,
@@ -6,11 +6,29 @@ import {
   Crosshair,
   ExternalLink,
   Flame,
+  Send,
   ShieldAlert,
   Target,
   Zap,
 } from 'lucide-react';
 import type { SignalItem } from '../../types';
+
+interface LatestOutcome {
+  hasData: boolean;
+  signalId?: string;
+  symbol?: string;
+  direction?: string;
+  finalStatus?: string;
+  entryPrice?: number;
+  exitPrice?: number;
+  pnlPoints?: number;
+  pnlPips?: number;
+  isWin?: boolean;
+  isLoss?: boolean;
+  isBreakeven?: boolean;
+  durationSeconds?: number;
+  closedAt?: string;
+}
 
 interface LiveOpenPositionsProps {
   signals: SignalItem[];
@@ -23,6 +41,51 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
   currentPrice,
   onSelectSignal,
 }) => {
+  const [latestOutcome, setLatestOutcome] = useState<LatestOutcome | null>(null);
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [broadcastResult, setBroadcastResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // Tải thông tin lệnh vừa đóng gần nhất
+  const fetchLatestOutcome = async () => {
+    try {
+      const res = await fetch('/api/v1/signals/latest-outcome');
+      if (res.ok) {
+        const data = await res.json();
+        setLatestOutcome(data);
+      }
+    } catch {
+      // Bỏ qua lỗi ngầm
+    }
+  };
+
+  useEffect(() => {
+    fetchLatestOutcome();
+    const interval = setInterval(fetchLatestOutcome, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Hàm bắn thông báo tổng hợp lệnh vừa đóng lên Telegram
+  const handleBroadcast = async () => {
+    setIsBroadcasting(true);
+    setBroadcastResult(null);
+    try {
+      const res = await fetch('/api/v1/telegram/broadcast-last-outcome', {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setBroadcastResult({ ok: true, msg: data.message });
+      } else {
+        setBroadcastResult({ ok: false, msg: data.detail || 'Không thể gửi báo cáo lên Telegram.' });
+      }
+    } catch (e: any) {
+      setBroadcastResult({ ok: false, msg: e.message || 'Lỗi mạng khi kết nối API Telegram.' });
+    } finally {
+      setIsBroadcasting(false);
+      setTimeout(() => setBroadcastResult(null), 8000);
+    }
+  };
+
   // Lọc các tín hiệu đang mở (ENTRY_REACHED: Đang khớp lệnh thả nổi PnL; ACTIVE: Đang chờ khớp entry)
   const openPositions = signals.filter(
     (s) => s.status === 'ENTRY_REACHED' || s.status === 'ACTIVE'
@@ -149,22 +212,175 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
 
       {/* Content */}
       <div style={{ paddingTop: '16px' }}>
-        {openPositions.length === 0 ? (
+        {broadcastResult && (
           <div
             style={{
-              padding: '24px 16px',
-              textAlign: 'center',
-              backgroundColor: 'rgba(15, 23, 42, 0.6)',
+              marginBottom: '14px',
+              padding: '10px 14px',
               borderRadius: '8px',
-              border: '1px dashed rgba(255, 255, 255, 0.1)',
+              backgroundColor: broadcastResult.ok ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+              border: `1px solid ${broadcastResult.ok ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
+              color: broadcastResult.ok ? '#10B981' : '#F87171',
+              fontSize: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
             }}
           >
-            <Activity size={24} style={{ color: '#64748B', margin: '0 auto 8px auto', display: 'block' }} />
-            <div style={{ fontSize: '13px', fontWeight: 600, color: '#CBD5E1' }}>
-              Hiện tại chưa có vị thế nào đang mở
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Send size={15} />
+              <span>{broadcastResult.msg}</span>
             </div>
-            <div style={{ fontSize: '11px', color: '#64748B', marginTop: '4px' }}>
-              Bot đang liên tục quét nến M5 và các khung lớn H1/H4. Khi có setup Order Block hoặc FVG hợp lệ, lệnh sẽ xuất hiện tại đây.
+            <button
+              onClick={() => setBroadcastResult(null)}
+              style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '13px' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {openPositions.length === 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Lệnh Vừa Khớp & Đóng Gần Nhất (Recent Outcome) */}
+            {latestOutcome && latestOutcome.hasData && (
+              <div
+                style={{
+                  backgroundColor: 'rgba(15, 23, 42, 0.85)',
+                  borderRadius: '10px',
+                  border: `1px solid ${latestOutcome.isWin ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+                  padding: '16px 20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span
+                      style={{
+                        padding: '3px 8px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        backgroundColor: latestOutcome.direction === 'SELL' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+                        color: latestOutcome.direction === 'SELL' ? '#EF4444' : '#10B981',
+                      }}
+                    >
+                      {latestOutcome.direction}
+                    </span>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#F1F5F9' }}>
+                      Lệnh Vừa Khớp Gần Nhất [#{latestOutcome.signalId}]
+                    </span>
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        backgroundColor: latestOutcome.isWin ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                        color: latestOutcome.isWin ? '#10B981' : '#F87171',
+                      }}
+                    >
+                      {latestOutcome.finalStatus === 'TP_REACHED' ? '✓ TAKE PROFIT' : '✕ STOP LOSS'}
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={handleBroadcast}
+                    disabled={isBroadcasting}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '6px 14px',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      backgroundColor: 'rgba(245, 158, 11, 0.18)',
+                      border: '1px solid rgba(245, 158, 11, 0.4)',
+                      color: 'var(--color-accent-gold)',
+                      cursor: isBroadcasting ? 'wait' : 'pointer',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    <Send size={13} />
+                    {isBroadcasting ? 'Đang gửi Tele...' : '📢 Báo Cáo Lệnh Này Lên Tele'}
+                  </button>
+                </div>
+
+                {/* Chi tiết Giá và PnL Pips */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
+                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '8px 12px', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '10px', color: '#94A3B8' }}>Khớp Entry</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', color: '#F1F5F9', marginTop: '2px' }}>
+                      ${latestOutcome.entryPrice?.toFixed(2)}
+                    </div>
+                  </div>
+
+                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '8px 12px', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '10px', color: '#94A3B8' }}>Giá Đóng (Exit)</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', color: '#F1F5F9', marginTop: '2px' }}>
+                      ${latestOutcome.exitPrice?.toFixed(2)}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      backgroundColor: latestOutcome.isWin ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      border: `1px solid ${latestOutcome.isWin ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
+                    }}
+                  >
+                    <div style={{ fontSize: '10px', color: latestOutcome.isWin ? '#34D399' : '#F87171' }}>
+                      Tổng PnL (Pips & Giá)
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '14px',
+                        fontWeight: 800,
+                        fontFamily: 'monospace',
+                        color: latestOutcome.isWin ? '#10B981' : '#EF4444',
+                        marginTop: '2px',
+                      }}
+                    >
+                      {latestOutcome.pnlPips && latestOutcome.pnlPips > 0 ? `+${latestOutcome.pnlPips.toFixed(1)}` : latestOutcome.pnlPips?.toFixed(1)} Pips
+                      {' '}
+                      <span style={{ fontSize: '11px', opacity: 0.85 }}>
+                        ({latestOutcome.pnlPoints && latestOutcome.pnlPoints > 0 ? `+${latestOutcome.pnlPoints.toFixed(2)}` : latestOutcome.pnlPoints?.toFixed(2)} giá)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', padding: '8px 12px', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '10px', color: '#94A3B8' }}>Quy đổi 0.1 Lot</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', color: latestOutcome.isWin ? '#10B981' : '#EF4444', marginTop: '2px' }}>
+                      {latestOutcome.pnlPips && latestOutcome.pnlPips > 0 ? `+$${(latestOutcome.pnlPips * 1.0).toFixed(1)}` : `-$${Math.abs((latestOutcome.pnlPips || 0) * 1.0).toFixed(1)}`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div
+              style={{
+                padding: '20px 16px',
+                textAlign: 'center',
+                backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                borderRadius: '8px',
+                border: '1px dashed rgba(255, 255, 255, 0.1)',
+              }}
+            >
+              <Activity size={24} style={{ color: '#64748B', margin: '0 auto 8px auto', display: 'block' }} />
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#CBD5E1' }}>
+                Hiện tại chưa có vị thế nào đang mở
+              </div>
+              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '4px' }}>
+                Bot đang liên tục quét nến M5 và các khung lớn H1/H4. Khi có setup Order Block hoặc FVG hợp lệ, lệnh sẽ xuất hiện tại đây.
+              </div>
             </div>
           </div>
         ) : (

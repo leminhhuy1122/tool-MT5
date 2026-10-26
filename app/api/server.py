@@ -408,6 +408,37 @@ def get_signals(limit: int = 20):
     return signals
 
 
+@app.get("/api/v1/signals/latest-outcome")
+def get_latest_signal_outcome():
+    """Lấy thông tin lệnh vừa đóng gần nhất và thống kê pips."""
+    if not signal_repo:
+        raise HTTPException(status_code=500, detail="Database repository chưa sẵn sàng")
+
+    outcome = signal_repo.get_latest_outcome()
+    if not outcome:
+        return {"hasData": False, "message": "Chưa có lệnh nào hoàn tất."}
+
+    pnl_pts = float(outcome.get("pnl_points") or 0.0)
+    pnl_pips = round(pnl_pts * 10.0, 1)
+
+    return {
+        "hasData": True,
+        "signalId": outcome.get("signal_id"),
+        "symbol": outcome.get("symbol", "XAUUSD"),
+        "direction": outcome.get("direction", "BUY"),
+        "finalStatus": outcome.get("final_status"),
+        "entryPrice": outcome.get("entry_price"),
+        "exitPrice": outcome.get("exit_price"),
+        "pnlPoints": pnl_pts,
+        "pnlPips": pnl_pips,
+        "isWin": pnl_pts > 0,
+        "isLoss": pnl_pts < 0,
+        "isBreakeven": pnl_pts == 0,
+        "durationSeconds": outcome.get("duration_seconds"),
+        "closedAt": outcome.get("created_at") or outcome.get("exit_time"),
+    }
+
+
 @app.get("/api/v1/signals/{signal_id}")
 def get_signal_detail(signal_id: str):
     """Lấy chi tiết một tín hiệu theo ID từ SQLite Database."""
@@ -958,6 +989,57 @@ def update_ai_news_settings(req: UpdateAISettingsRequest):
         "message": "Đã lưu cấu hình OpenAI và tự động đăng tin thành công!",
         "openai_configured": ai_writer.openai_config.is_configured,
         "openai_model": ai_writer.openai_config.model,
+    }
+
+
+@app.post("/api/v1/telegram/broadcast-last-outcome")
+def broadcast_last_outcome_to_telegram():
+    """
+    Bắn thông báo tổng hợp kết quả của lệnh vừa khớp gần nhất (Lời/Lỗ bao nhiêu Pip) lên Telegram.
+    """
+    if not signal_repo:
+        raise HTTPException(status_code=500, detail="Database repository chưa sẵn sàng")
+
+    outcome = signal_repo.get_latest_outcome()
+    if not outcome:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lệnh nào đã hoàn tất để gửi báo cáo.")
+
+    pnl_pts = float(outcome.get("pnl_points") or 0.0)
+    pnl_pips = round(pnl_pts * 10.0, 1)
+    exit_price = float(outcome.get("exit_price") or outcome.get("entry_price") or 0.0)
+
+    # Tính duration_str nếu có
+    duration_str = None
+    dur_sec = outcome.get("duration_seconds")
+    if dur_sec:
+        mins = max(1, int(dur_sec) // 60)
+        if mins < 60:
+            duration_str = f"{mins} phút"
+        else:
+            duration_str = f"{mins // 60}h {mins % 60}m"
+
+    # Lấy thống kê hiệu suất tích lũy
+    perf_stats = signal_repo.get_performance_summary()
+
+    sent = notifier.send_trade_outcome_summary(
+        signal_or_data=outcome,
+        exit_price=exit_price,
+        pnl_points=pnl_pts,
+        duration_str=duration_str,
+        stats=perf_stats,
+        force=True,  # Cho phép bấm gửi ngay theo yêu cầu
+    )
+
+    if not sent:
+        raise HTTPException(status_code=502, detail="Gửi thông báo tổng hợp lệnh tới Telegram thất bại.")
+
+    status_vn = "LÃI" if pnl_pips > 0 else ("LỖ" if pnl_pips < 0 else "HÒA VỐN")
+    return {
+        "ok": True,
+        "message": f"Đã gửi thông báo tổng hợp lệnh #{outcome.get('signal_id')} ({status_vn} {abs(pnl_pips):.1f} Pips) lên Telegram thành công!",
+        "signalId": outcome.get("signal_id"),
+        "pnlPips": pnl_pips,
+        "pnlPoints": pnl_pts,
     }
 
 

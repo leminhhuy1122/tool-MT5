@@ -13,7 +13,7 @@ LƯU Ý:
 """
 
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from app.strategy.signal_models import SignalDirection, SignalStatus, TradingSignal
 
@@ -265,3 +265,113 @@ def format_custom_announcement(message: str) -> str:
         "───────────────────────────────\n"
         "🏆 <i>VietKey Gold AI — Chúc quý nhà đầu tư giao dịch thành công!</i>"
     )
+
+
+def format_trade_outcome_summary(
+    signal_or_data: Any,
+    exit_price: float,
+    pnl_points: float,
+    duration_str: Optional[str] = None,
+    stats: Optional[dict] = None,
+) -> str:
+    """
+    Định dạng tin nhắn thông báo tổng hợp kết quả lệnh vừa khớp / vừa đóng.
+    Báo cáo rõ ràng: LỜI hay LỖ bao nhiêu PIP, bao nhiêu giá, quy đổi USD và thống kê hiệu suất tài khoản.
+    """
+    if hasattr(signal_or_data, "signal_id"):
+        sig_id = signal_or_data.signal_id
+        direction = signal_or_data.direction.value if hasattr(signal_or_data.direction, "value") else str(signal_or_data.direction)
+        symbol = signal_or_data.symbol
+        entry_price = float(signal_or_data.entry_price or 0.0)
+        stop_loss = float(signal_or_data.stop_loss or 0.0)
+        take_profit_1 = float(signal_or_data.take_profit_1 or 0.0)
+        risk_reward = float(signal_or_data.risk_reward_ratio or 0.0)
+    elif isinstance(signal_or_data, dict):
+        sig_id = signal_or_data.get("signal_id", "N/A")
+        direction = str(signal_or_data.get("direction", "BUY"))
+        symbol = signal_or_data.get("symbol", "XAUUSD")
+        entry_price = float(signal_or_data.get("entry_price") or 0.0)
+        stop_loss = float(signal_or_data.get("stop_loss") or 0.0)
+        take_profit_1 = float(signal_or_data.get("take_profit_1") or 0.0)
+        risk_reward = float(signal_or_data.get("risk_reward_ratio") or 0.0)
+    else:
+        sig_id = "N/A"
+        direction = "BUY"
+        symbol = "XAUUSD"
+        entry_price = 0.0
+        stop_loss = 0.0
+        take_profit_1 = 0.0
+        risk_reward = 0.0
+
+    action = direction.upper()
+    sym = "Gold" if "XAU" in symbol.upper() else symbol
+    time_str = _to_vn_time_str()
+
+    pnl_pips = round(pnl_points * 10.0, 1)
+    abs_pts = abs(pnl_points)
+    abs_pips = abs(pnl_pips)
+
+    # Quy đổi tiền ước tính ($1/pip với 0.1 lot, $10/pip với 1.0 lot chuẩn vàng)
+    usd_01lot = abs_pips * 1.0
+    usd_1lot = abs_pips * 10.0
+
+    if pnl_pips > 0:
+        header = f"🎉 <b>TỔNG HỢP LỆNH VỪA KHỚP: CHỐT LÃI (+{abs_pips:.1f} PIPS)</b>"
+        badge = f"🟢 <b>KẾT QUẢ: LÃI +{abs_pips:.1f} PIPS (+{abs_pts:.2f} GIÁ)</b>"
+        status_note = f"✅ <b>Chốt lời thành công!</b> Tỷ lệ đạt được: <b>+{risk_reward:.1f}R</b>"
+        profit_usd_str = f"+${usd_01lot:,.2f} (0.1 lot) | +${usd_1lot:,.2f} (1.0 lot)"
+    elif pnl_pips < 0:
+        header = f"❌ <b>TỔNG HỢP LỆNH VỪA KHỚP: CẮT LỖ (-{abs_pips:.1f} PIPS)</b>"
+        badge = f"🔴 <b>KẾT QUẢ: LỖ -{abs_pips:.1f} PIPS (-{abs_pts:.2f} GIÁ)</b>"
+        status_note = "🛡 <b>Dừng lỗ bảo toàn vốn!</b> Tuân thủ kỷ luật giao dịch."
+        profit_usd_str = f"-${usd_01lot:,.2f} (0.1 lot) | -${usd_1lot:,.2f} (1.0 lot)"
+    else:
+        header = "⚖️ <b>TỔNG HỢP LỆNH VỪA KHỚP: HÒA VỐN (BREAKEVEN)</b>"
+        badge = "🟡 <b>KẾT QUẢ: HÒA VỐN 0.0 PIPS (0.00 GIÁ)</b>"
+        status_note = "⚖️ <b>Dời SL hòa vốn thành công</b>, bảo vệ toàn vẹn tài khoản."
+        profit_usd_str = "$0.00"
+
+    lines = [
+        header,
+        f"⏱ <i>{time_str} (VN)</i> | Mã lệnh: <code>#{sig_id}</code>",
+        "───────────────────────────────",
+        badge,
+        status_note,
+        "",
+        f"📌 <b>Sản phẩm:</b> <code>{symbol} ({sym})</code> | Vị thế: <b>{action}</b>",
+        f"🎯 <b>Điểm vào (Entry):</b> <code>{entry_price:.2f}</code>",
+        f"🏁 <b>Điểm đóng (Exit):</b> <code>{exit_price:.2f}</code>",
+        f"🛡 <b>Ngưỡng SL/TP:</b> SL <code>{stop_loss:.2f}</code> | TP1 <code>{take_profit_1:.2f}</code>",
+        f"💵 <b>Ước tính PnL:</b> <code>{profit_usd_str}</code>",
+    ]
+
+    if duration_str:
+        lines.append(f"⏳ <b>Thời gian giữ lệnh:</b> <code>{duration_str}</code>")
+
+    if stats and stats.get("total", 0) > 0:
+        tot = stats.get("total", 0)
+        wins = stats.get("wins", 0)
+        losses = stats.get("losses", 0)
+        wr = stats.get("win_rate", 0.0)
+        pf = stats.get("profit_factor", 0.0)
+        net_pips = stats.get("net_pips", 0.0)
+        net_pts = stats.get("net_points", 0.0)
+        sign_pips = "+" if net_pips > 0 else ""
+        sign_pts = "+" if net_pts > 0 else ""
+
+        lines.extend([
+            "",
+            "───────────────────────────────",
+            "📊 <b>HIỆU SUẤT TỔNG HỢP TÀI KHOẢN:</b>",
+            f"• Tổng lệnh đã đóng: <b>{tot} lệnh</b> ({wins} Thắng - {losses} Thua)",
+            f"• Tỷ lệ thắng (Winrate): <b>{wr:.1f}%</b> | Profit Factor: <b>{pf:.2f}</b>",
+            f"• Tổng Net Pips: <b>{sign_pips}{net_pips:.1f} Pips</b> ({sign_pts}{net_pts:.2f} giá)",
+        ])
+
+    lines.extend([
+        "",
+        "🏆 <i>VietKey Gold AI Terminal — Quản trị rủi ro định lượng</i>",
+    ])
+
+    return "\n".join(lines)
+
