@@ -153,3 +153,17 @@ class TestTelegramFormatter:
         text_error = format_system_notification("ERROR", "Mất kết nối với sàn MT5.")
         assert "HỆ THỐNG: ERROR" in text_error
         assert "Mất kết nối với sàn MT5." in text_error
+
+    def test_format_early_exit_alert(self):
+        """Kiểm tra format cảnh báo thoát lệnh sớm (Early Structural Exit)."""
+        from app.telegram.formatter import format_early_exit_alert
+        sig = _make_buy_signal()
+        sig.direction = SignalDirection.SELL
+        sig.stop_loss = 4003.34
+        text = format_early_exit_alert(sig, close_price=4000.80, invalidation_level=4000.42)
+
+        assert "CẢNH BÁO CẤU TRÚC (THOÁT LỆNH SỚM): SELL Gold" in text
+        assert "4000.80" in text
+        assert "4000.42" in text
+        assert "4003.34" in text
+        assert "Giảm thiểu được" in text

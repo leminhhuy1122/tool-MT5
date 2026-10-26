@@ -17,6 +17,7 @@ from app.strategy.signal_models import SignalDirection, SignalStatus, TradingSig
 from app.telegram.client import TelegramClient, TelegramResponse
 from app.telegram.formatter import (
     format_custom_announcement,
+    format_early_exit_alert,
     format_news_broadcast,
     format_signal_message,
     format_signal_update,
@@ -176,6 +177,40 @@ class TelegramNotifier:
     ) -> bool:
         """Alias cho send_signal_update."""
         return self.send_signal_update(signal, price=price, custom_message=custom_message, force=force)
+
+    def send_early_exit_alert(
+        self,
+        signal: TradingSignal,
+        close_price: float,
+        invalidation_level: float,
+    ) -> bool:
+        """
+        Gửi cảnh báo thoát lệnh sớm (Early Structural Exit) khi nến M5 đóng vi phạm Order Block/FVG.
+        """
+        if not self.is_enabled:
+            return False
+
+        key = f"{signal.signal_id}_EARLY_EXIT"
+        if key in self._sent_keys:
+            log.info("Cảnh báo Early Exit cho [%s] đã được gửi trước đó, bỏ qua lặp.", signal.signal_id)
+            return True
+
+        text = format_early_exit_alert(
+            signal=signal,
+            close_price=close_price,
+            invalidation_level=invalidation_level,
+        )
+        resp: TelegramResponse = self.client.send_message(text)
+
+        if resp.ok:
+            self._sent_keys.add(key)
+            self.total_sent += 1
+            log.info("✓ Đã gửi cảnh báo thoát lệnh sớm [%s] tới Telegram.", signal.signal_id)
+            return True
+        else:
+            self.total_failed += 1
+            log.error("✗ Gửi cảnh báo thoát lệnh sớm [%s] thất bại: %s", signal.signal_id, resp.description)
+            return False
 
     def send_system_event(self, event_type: str, message: str) -> bool:
         """

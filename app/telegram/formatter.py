@@ -154,6 +154,30 @@ def format_signal_update(
     )
 
 
+def format_early_exit_alert(
+    signal: TradingSignal,
+    close_price: float,
+    invalidation_level: float,
+) -> str:
+    """
+    Định dạng tin nhắn cảnh báo thoát lệnh sớm (Early Structural Exit) khi nến M5 đóng vi phạm vùng bảo vệ.
+    """
+    action = signal.direction.value.upper()
+    sym = "Gold" if "XAU" in signal.symbol.upper() else signal.symbol
+    time_str = _to_vn_time_str()
+
+    saved_pts = abs(signal.stop_loss - close_price)
+    saved_pips = saved_pts * 10.0
+
+    return (
+        f"⚠️ <b>CẢNH BÁO CẤU TRÚC (THOÁT LỆNH SỚM): {action} {sym}</b> [<code>#{signal.signal_id}</code>]\n\n"
+        f"📌 <b>Hiện tượng:</b> Nến M5 vừa đóng cửa tại <code>{close_price:.2f}</code>, vi phạm vùng phòng thủ (Mức vô hiệu: <code>{invalidation_level:.2f}</code>).\n"
+        f"💡 <b>Khuyến nghị:</b> Cắt lỗ sớm quanh <code>{close_price:.2f}</code> để bảo toàn vốn thay vì chờ cắn đủ Hard SL <code>{signal.stop_loss:.2f}</code>!\n"
+        f"🛡 <b>Tiết kiệm rủi ro:</b> Giảm thiểu được ~<code>{saved_pts:.1f} giá</code> (~{saved_pips:.0f} pips) lỗ so với SL 10 giá.\n"
+        f"⏰ <i>{time_str} (VN) | Quản trị rủi ro chủ động</i>"
+    )
+
+
 def format_system_notification(event_type: str, message: str) -> str:
     """
     Định dạng tin nhắn thông báo sự kiện hệ thống ngắn gọn.

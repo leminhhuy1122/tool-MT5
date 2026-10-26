@@ -18,6 +18,7 @@ Bộ điều phối toàn diện cho việc chạy tự động theo thời gian
 
 from datetime import datetime, timezone
 import os
+import re
 import signal
 import sys
 import time
@@ -194,7 +195,14 @@ class LiveBotRunner:
                 return None
 
             self.last_processed_m5_time = last_bar_time
-            log.info("✓ Nhận diện nến M5 mới: %s (Close: %.2f)", last_bar_time, df_m5["close"].iloc[-1])
+            close_price = float(df_m5["close"].iloc[-1])
+            log.info("✓ Nhận diện nến M5 mới: %s (Close: %.2f)", last_bar_time, close_price)
+
+            # Kiểm tra Cảnh Báo Thoát Lệnh Sớm (Early Exit Alert) khi nến M5 vi phạm cấu trúc Order Block
+            try:
+                self.check_early_structural_exit(close_price=close_price)
+            except Exception as e:
+                log.debug("Lỗi kiểm tra early structural exit: %s", e)
 
             # Lưu nến vào database
             try:
@@ -311,6 +319,46 @@ class LiveBotRunner:
                 return post_text
 
         return None
+
+    def check_early_structural_exit(self, close_price: float) -> list[str]:
+        """
+        Kiểm tra nếu nến M5 vừa đóng vi phạm cấu trúc Order Block/FVG để cảnh báo cắt lỗ sớm (Early Exit).
+        - Đối với lệnh SELL: Nếu nến M5 Close > đỉnh Order Block.
+        - Đối với lệnh BUY: Nếu nến M5 Close < đáy Order Block.
+        """
+        alerted_ids: list[str] = []
+        for sig in self.tracker.active_signals:
+            if sig.status != SignalStatus.ENTRY_REACHED or not sig.invalidation:
+                continue
+
+            # Trích xuất mức giá vô hiệu hóa từ chuỗi invalidation (vd: 'Close vượt đỉnh Order Block 4000.42')
+            match = re.search(r"(\d{3,5}\.?\d*)", sig.invalidation)
+            if not match:
+                continue
+
+            inval_level = float(match.group(1))
+
+            should_alert = False
+            if sig.direction == SignalDirection.SELL and close_price > inval_level:
+                should_alert = True
+            elif sig.direction == SignalDirection.BUY and close_price < inval_level:
+                should_alert = True
+
+            if should_alert:
+                log.warning(
+                    "⚠️ PHÁT HIỆN VI PHẠM CẤU TRÚC: Lệnh %s [%s] có nến M5 Close (%.2f) vi phạm mức bảo vệ (%.2f). Gửi cảnh báo thoát lệnh sớm!",
+                    sig.direction.value, sig.signal_id, close_price, inval_level,
+                )
+                if self.notifier and self.notifier.is_enabled:
+                    sent = self.notifier.send_early_exit_alert(
+                        signal=sig,
+                        close_price=close_price,
+                        invalidation_level=inval_level,
+                    )
+                    if sent:
+                        alerted_ids.append(sig.signal_id)
+
+        return alerted_ids
 
     def run_forever(self, poll_interval_sec: float = 5.0) -> None:
         """
