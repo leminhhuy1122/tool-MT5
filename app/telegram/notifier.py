@@ -163,6 +163,20 @@ class TelegramNotifier:
             log.error("✗ Gửi cập nhật trạng thái [%s] thất bại: %s", signal.signal_id, resp.description)
             return False
 
+    def notify_signal(self, signal: TradingSignal, force: bool = False) -> bool:
+        """Alias cho send_signal."""
+        return self.send_signal(signal, force=force)
+
+    def notify_status_update(
+        self,
+        signal: TradingSignal,
+        price: float,
+        custom_message: Optional[str] = None,
+        force: bool = False,
+    ) -> bool:
+        """Alias cho send_signal_update."""
+        return self.send_signal_update(signal, price=price, custom_message=custom_message, force=force)
+
     def send_system_event(self, event_type: str, message: str) -> bool:
         """
         Gửi thông báo sự kiện hệ thống (khởi động, cảnh báo, lỗi kết nối MT5...).
