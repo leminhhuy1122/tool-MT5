@@ -201,3 +201,72 @@ class TestSignalTracker:
         # Kiểm tra chống trùng lặp nhận diện đúng tín hiệu đã khôi phục
         assert tracker.is_duplicate("XAUUSD", SignalDirection.SELL) is True
 
+    def test_active_signal_invalidated_when_tp_hit_before_entry(self):
+        """Nếu giá chạm TP1 mà chưa từng khớp Entry thì hủy lệnh (kèo đã chạy xong)."""
+        tracker = SignalTracker(config=TrackerConfig(max_unfilled_distance_pts=15.0, unfilled_expiry_minutes=60))
+        sig = TradingSignal(
+            signal_id="sig_missed",
+            symbol="XAUUSD",
+            direction=SignalDirection.BUY,
+            status=SignalStatus.ACTIVE,
+            entry_price=4009.0,
+            entry_zone_low=4008.0,
+            entry_zone_high=4010.0,
+            stop_loss=3998.0,
+            take_profit_1=4018.0,
+            created_at=datetime.now(timezone.utc),
+        )
+        tracker.register_signal(sig)
+
+        # Giá tăng từ 4012 lên 4020 (chạm TP1 4018) mà không chạm đáy 4010
+        changed = tracker.update_price(current_price=4020.0, high_price=4020.0, low_price=4012.0)
+        assert len(changed) == 1
+        assert sig.status == SignalStatus.INVALIDATED
+        assert "TP1" in sig.invalidation
+
+    def test_active_signal_invalidated_when_out_of_reach(self):
+        """Nếu giá đi quá xa vùng Entry (>= 8 giá) mà không khớp thì hủy lệnh chờ để đón kèo mới."""
+        tracker = SignalTracker(config=TrackerConfig(max_unfilled_distance_pts=8.0, unfilled_expiry_minutes=60))
+        sig = TradingSignal(
+            signal_id="sig_far",
+            symbol="XAUUSD",
+            direction=SignalDirection.BUY,
+            status=SignalStatus.ACTIVE,
+            entry_price=4010.0,
+            entry_zone_low=4008.0,
+            entry_zone_high=4010.0,
+            stop_loss=3998.0,
+            take_profit_1=4035.0,
+            created_at=datetime.now(timezone.utc),
+        )
+        tracker.register_signal(sig)
+
+        # Giá bay lên 4019 (cách entry_zone_high 4010 là 9 giá >= 8 giá)
+        changed = tracker.update_price(current_price=4019.0, high_price=4019.0, low_price=4012.0)
+        assert len(changed) == 1
+        assert sig.status == SignalStatus.INVALIDATED
+        assert "quá xa" in sig.invalidation
+
+    def test_active_signal_expired_when_unfilled_timeout(self):
+        """Nếu quá 45 phút chưa khớp entry thì hủy hết hạn (EXPIRED)."""
+        tracker = SignalTracker(config=TrackerConfig(max_unfilled_distance_pts=15.0, unfilled_expiry_minutes=45))
+        old_time = datetime.now(timezone.utc) - timedelta(minutes=50)
+        sig = TradingSignal(
+            signal_id="sig_stale",
+            symbol="XAUUSD",
+            direction=SignalDirection.BUY,
+            status=SignalStatus.ACTIVE,
+            entry_price=4010.0,
+            entry_zone_low=4008.0,
+            entry_zone_high=4010.0,
+            stop_loss=3998.0,
+            take_profit_1=4035.0,
+            created_at=old_time,
+        )
+        tracker._signals[sig.signal_id] = sig
+
+        changed = tracker.update_price(current_price=4013.0, high_price=4014.0, low_price=4012.0)
+        assert len(changed) == 1
+        assert sig.status == SignalStatus.EXPIRED
+
+

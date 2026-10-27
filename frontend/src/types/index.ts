@@ -38,6 +38,9 @@ export interface SignalItem {
   strategyVersion: string;
   setupType?: string;
   isPredictive?: boolean;
+  isDca?: boolean;
+  parentSignalId?: string;
+  dcaBreakevenPrice?: number;
   modelVersion?: string;
   reason: string;
   invalidation: string;

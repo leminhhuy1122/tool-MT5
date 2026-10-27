@@ -39,10 +39,12 @@ class PaperTradingEngine:
         db_manager: DatabaseManager,
         notifier: Optional[Any] = None,
         smart_exit_engine: Optional[SmartExitEngine] = None,
+        notify_telegram: bool = False,
     ):
         self.db = db_manager
         self.notifier = notifier
         self.smart_exit = smart_exit_engine or SmartExitEngine()
+        self.notify_telegram = notify_telegram
 
         # Đảm bảo bảng và ví mặc định đã sẵn sàng
         self._ensure_wallet_initialized()
@@ -277,11 +279,11 @@ class PaperTradingEngine:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
 
-                # Lấy các tín hiệu ACTIVE hoặc ENTRY_REACHED chưa có trong paper_positions và chưa từng đóng trong paper_trades_history
+                # Chỉ lấy các tín hiệu ĐÃ KHỚP THẬT SỰ (ENTRY_REACHED) chưa có trong paper_positions và chưa từng đóng trong paper_trades_history
                 cursor.execute(
                     """
                     SELECT s.* FROM signals s
-                    WHERE s.status IN ('ACTIVE', 'ENTRY_REACHED')
+                    WHERE s.status = 'ENTRY_REACHED'
                       AND NOT EXISTS (
                           SELECT 1 FROM paper_positions p 
                           WHERE p.wallet_id = ? AND p.signal_id = s.signal_id
@@ -502,8 +504,8 @@ class PaperTradingEngine:
             position.stop_loss, position.take_profit_1, margin_req,
         )
 
-        # Thông báo qua Telegram nếu được kích hoạt
-        if self.notifier and getattr(self.notifier, "is_enabled", False):
+        # Thông báo qua Telegram nếu được kích hoạt (mặc định tắt để tránh làm phiền kênh)
+        if self.notify_telegram and self.notifier and getattr(self.notifier, "is_enabled", False):
             try:
                 alert_msg = (
                     f"💼 <b>VÍ ĐẦU TƯ ẢO (VỐN ${wallet.balance:.2f}): KHỚP LỆNH 0.01 LOT</b>\n\n"
@@ -806,8 +808,8 @@ class PaperTradingEngine:
             "+" if pnl_pips >= 0 else "", pnl_pips, close_reason,
         )
 
-        # Thông báo qua Telegram
-        if self.notifier and getattr(self.notifier, "is_enabled", False):
+        # Thông báo qua Telegram (mặc định tắt để tránh làm phiền kênh)
+        if self.notify_telegram and self.notifier and getattr(self.notifier, "is_enabled", False):
             try:
                 status_emoji = "🎯 LÃI" if pnl_usd > 0 else ("🛡️ HÒA VỐN" if pnl_usd == 0 else "🛑 CẮT LỖ")
                 dur_min = max(1, dur_sec // 60)
@@ -904,6 +906,21 @@ class PaperTradingEngine:
         )
         self._sync_wallet_equity(wallet_id)
         return trade
+
+    def update_position_sl(
+        self,
+        signal_id: str,
+        new_sl: float,
+        wallet_id: str = DEFAULT_WALLET_ID,
+    ) -> bool:
+        """Đồng bộ mức Stop Loss mới (Breakeven / Trailing Stop) từ tín hiệu vào vị thế ví ảo."""
+        with self.db.session() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE paper_positions SET stop_loss = ?, last_update = ? WHERE wallet_id = ? AND signal_id = ? AND status = 'OPEN';",
+                (new_sl, datetime.now(timezone.utc).isoformat(), wallet_id, signal_id),
+            )
+            return cursor.rowcount > 0
 
     def _sync_wallet_equity(self, wallet_id: str = DEFAULT_WALLET_ID) -> None:
         """Đồng bộ tài sản Equity = Balance + Floating PnL của ví vào SQLite."""

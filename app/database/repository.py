@@ -36,6 +36,12 @@ class SignalRepository:
                 s_cols = [r["name"] for r in cursor.fetchall()]
                 if s_cols and "market_regime" not in s_cols:
                     conn.execute("ALTER TABLE signals ADD COLUMN market_regime TEXT DEFAULT 'UNKNOWN';")
+                if s_cols and "is_dca" not in s_cols:
+                    conn.execute("ALTER TABLE signals ADD COLUMN is_dca INTEGER DEFAULT 0;")
+                if s_cols and "parent_signal_id" not in s_cols:
+                    conn.execute("ALTER TABLE signals ADD COLUMN parent_signal_id TEXT;")
+                if s_cols and "dca_breakeven_price" not in s_cols:
+                    conn.execute("ALTER TABLE signals ADD COLUMN dca_breakeven_price REAL;")
 
                 cursor = conn.execute("PRAGMA table_info(signal_features);")
                 cols = [r["name"] for r in cursor.fetchall()]
@@ -68,6 +74,9 @@ class SignalRepository:
         expires_str = signal.expires_at.isoformat() if signal.expires_at else None
         reasons_json = json.dumps(signal.reasons, ensure_ascii=False)
         regime_str = getattr(signal, "market_regime", "UNKNOWN") or "UNKNOWN"
+        is_dca_val = 1 if getattr(signal, "is_dca", False) else 0
+        parent_id_val = getattr(signal, "parent_signal_id", None)
+        be_price_val = getattr(signal, "dca_breakeven_price", None)
 
         sql_signal = """
         INSERT OR REPLACE INTO signals (
@@ -75,8 +84,9 @@ class SignalRepository:
             entry_price, entry_zone_low, entry_zone_high, stop_loss,
             take_profit_1, take_profit_2, risk_reward_ratio, sl_distance,
             tp_distance, score, confidence, setup_type, reasons,
-            invalidation, trend_h4, trend_h1, market_regime, created_at, expires_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            invalidation, trend_h4, trend_h1, market_regime, is_dca, parent_signal_id, dca_breakeven_price,
+            created_at, expires_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
 
         params = (
@@ -103,6 +113,9 @@ class SignalRepository:
             signal.trend_h4,
             signal.trend_h1,
             regime_str,
+            is_dca_val,
+            parent_id_val,
+            float(be_price_val) if be_price_val is not None else None,
             created_str,
             expires_str,
             created_str,
@@ -192,6 +205,7 @@ class SignalRepository:
         signal_id: str,
         status: SignalStatus,
         updated_at: Optional[datetime] = None,
+        invalidation: Optional[str] = None,
     ) -> bool:
         """
         Cập nhật trạng thái của tín hiệu.
@@ -200,15 +214,21 @@ class SignalRepository:
             signal_id: ID tín hiệu.
             status: Trạng thái mới.
             updated_at: Thời điểm cập nhật.
+            invalidation: Lý do hủy/vô hiệu hóa nếu có.
 
         Returns:
             True nếu cập nhật thành công ít nhất 1 dòng.
         """
         now_str = (updated_at or datetime.now(timezone.utc)).isoformat()
-        sql = "UPDATE signals SET status = ?, updated_at = ? WHERE signal_id = ?;"
+        if invalidation:
+            sql = "UPDATE signals SET status = ?, invalidation = ?, updated_at = ? WHERE signal_id = ?;"
+            params = (status.value, invalidation, now_str, signal_id)
+        else:
+            sql = "UPDATE signals SET status = ?, updated_at = ? WHERE signal_id = ?;"
+            params = (status.value, now_str, signal_id)
 
         with self.db.session() as conn:
-            cursor = conn.execute(sql, (status.value, now_str, signal_id))
+            cursor = conn.execute(sql, params)
             updated = cursor.rowcount > 0
 
         if updated:

@@ -259,6 +259,29 @@ class HedgingConfig:
         )
 
 
+@dataclass(frozen=True)
+class DCAConfig:
+    """Cấu hình chiến lược DCA Cứu Lệnh Về Hòa & X2 Lợi Nhuận (Smart Recovery DCA)."""
+
+    enabled: bool = field(default=True)                       # Bật / Tắt DCA cứu lệnh
+    max_dca_steps: int = field(default=1)                     # Tối đa 1 lệnh DCA (tổng tối đa 2 lệnh: 1 gốc + 1 DCA) an toàn
+    min_drawdown_distance: float = field(default=3.5)         # Khoảng cách âm tối thiểu từ lệnh gốc để kích hoạt DCA (>= 3.5 giá)
+    volume_multiplier: float = field(default=1.0)             # Hệ số nhân khối lượng lệnh DCA (1.0 = cùng lot)
+    target_mode: str = field(default="DOUBLE_PROFIT")         # "DOUBLE_PROFIT": TP1 hòa vốn, TP2 ăn theo TP gốc để x2 lợi nhuận
+    breakeven_buffer: float = field(default=0.5)              # Đệm cộng thêm tại điểm hòa vốn (bù spread)
+
+    @classmethod
+    def from_env(cls) -> "DCAConfig":
+        return cls(
+            enabled=_get_env("DCA_ENABLED", default="true").lower() in ("true", "1", "yes"),
+            max_dca_steps=int(_get_env("DCA_MAX_STEPS", default="1")),
+            min_drawdown_distance=float(_get_env("DCA_MIN_DRAWDOWN", default="3.5")),
+            volume_multiplier=float(_get_env("DCA_VOLUME_MULTIPLIER", default="1.0")),
+            target_mode=_get_env("DCA_TARGET_MODE", default="DOUBLE_PROFIT"),
+            breakeven_buffer=float(_get_env("DCA_BREAKEVEN_BUFFER", default="0.5")),
+        )
+
+
 # ──────────────────────────────────────────────
 # Factory function: tạo tất cả config một lần
 # ──────────────────────────────────────────────
@@ -275,6 +298,7 @@ class Settings:
     optimization: OptimizationConfig = field(default_factory=OptimizationConfig.from_env)
     smart_exit: SmartExitConfig = field(default_factory=SmartExitConfig.from_env)
     hedging: HedgingConfig = field(default_factory=HedgingConfig.from_env)
+    dca: DCAConfig = field(default_factory=DCAConfig.from_env)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -289,6 +313,7 @@ class Settings:
             optimization=OptimizationConfig.from_env(),
             smart_exit=SmartExitConfig.from_env(),
             hedging=HedgingConfig.from_env(),
+            dca=DCAConfig.from_env(),
         )
 
 

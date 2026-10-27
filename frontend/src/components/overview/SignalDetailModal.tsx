@@ -121,6 +121,33 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
             </div>
           )}
 
+          {(signal.isDca || signal.setupType?.startsWith('DCA_')) && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(168, 85, 247, 0.12)',
+                border: '1px solid rgba(168, 85, 247, 0.35)',
+                marginBottom: '14px',
+              }}
+            >
+              <Scale size={20} color="#c084fc" />
+              <div>
+                <div style={{ fontWeight: 800, color: '#c084fc', fontSize: '13px' }}>
+                  🎯 CHIẾN LƯỢC SMART DCA • CỨU LỆNH VỀ HÒA & X2 LỢI NHUẬN
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  {signal.dcaBreakevenPrice
+                    ? `Điểm hòa vốn giỏ lệnh: $${signal.dcaBreakevenPrice.toFixed(2)}. Chạm TP1 hòa vốn an toàn; giữ đến TP2 $${signal.takeProfit2.toFixed(2)} để X2 LỢI NHUẬN cả 2 lệnh!`
+                    : 'Tín hiệu DCA vào tại cản đảo chiều giúp kéo điểm hòa vốn về gần, chốt lời kép khi giá quay lại xu hướng ban đầu.'}
+                </div>
+              </div>
+            </div>
+          )}
+
           {isBreakeven && !isWin && !isLoss && (
             <div
               style={{
@@ -146,6 +173,60 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
                 </div>
               </div>
               <div className="font-mono font-bold text-sm text-gold">0.0 pts</div>
+            </div>
+          )}
+
+          {signal.setupType === 'SMC_LIQUIDITY_SWEEP' && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: isSell ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+                border: `1px solid ${isSell ? 'rgba(239, 68, 68, 0.35)' : 'rgba(16, 185, 129, 0.35)'}`,
+                marginBottom: '14px',
+              }}
+            >
+              <Zap size={20} color={isSell ? '#ef4444' : '#10b981'} />
+              <div>
+                <div style={{ fontWeight: 800, color: isSell ? '#ef4444' : '#10b981', fontSize: '13px' }}>
+                  {isSell ? '🎯 CHIẾN LƯỢC BẮT ĐỈNH • SĂN THANH KHOẢN (BSL SWEEP)' : '🎯 CHIẾN LƯỢC BẮT ĐÁY • SĂN THANH KHOẢN (SSL SWEEP)'}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  {isSell
+                    ? 'Nến M5 đâm xuyên đỉnh cũ để bẫy phe Buy FOMO, sau đó để lại râu từ chối (Rejection Wick >= 0.6 giá) và đóng nến quay đầu. Kích hoạt SELL bắt đỉnh an toàn!'
+                    : 'Nến M5 đạp thủng đáy cũ để bẫy phe Sell đuổi, sau đó rút chân từ chối giá thấp (Rejection Wick >= 0.6 giá) và đóng nến tăng. Kích hoạt BUY bắt đáy an toàn!'}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {signal.setupType === 'RSI_DIVERGENCE' && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                border: '1px solid rgba(245, 158, 11, 0.35)',
+                marginBottom: '14px',
+              }}
+            >
+              <Zap size={20} color="#f59e0b" />
+              <div>
+                <div style={{ fontWeight: 800, color: '#f59e0b', fontSize: '13px' }}>
+                  {isSell ? '⚡ CHIẾN LƯỢC BẮT ĐỈNH ĐẢO CHIỀU • PHÂN KỲ RSI QUÁ MUA' : '⚡ CHIẾN LƯỢC BẮT ĐÁY ĐẢO CHIỀU • PHÂN KỲ RSI QUÁ BÁN'}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  {isSell
+                    ? 'Giá tạo đỉnh mới nhưng RSI tạo đỉnh thấp hơn (Phân kỳ giảm) tại vùng kháng cự. Động lượng mua cạn kiệt, báo hiệu đảo chiều giảm!'
+                    : 'Giá tạo đáy mới nhưng RSI tạo đáy cao hơn (Phân kỳ tăng) tại vùng hỗ trợ. Động lượng bán suy yếu, báo hiệu đảo chiều tăng!'}
+                </div>
+              </div>
             </div>
           )}
 
@@ -314,12 +395,13 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
             }}
           >
             <div style={{ fontWeight: 700, color: 'var(--color-accent-gold)', marginBottom: '4px' }}>
-              👉 Quy tắc quản lý lệnh vàng thực chiến:
+              👉 Quy tắc quản lý lệnh chuẩn Đỉnh/Đáy Kháng Cự & Hỗ Trợ:
             </div>
             <ul style={{ paddingLeft: '18px', lineHeight: '1.6' }}>
-              <li><strong>Entry:</strong> Điểm vào lệnh dao động ±1 giá quanh vùng đề xuất.</li>
-              <li><strong>Lãi 5 giá:</strong> Tự động kéo Stop Loss về hòa vốn (Breakeven).</li>
-              <li><strong>Lãi 10 giá:</strong> Chốt 50% khối lượng tại TP1, dời Stop Loss dương để nuôi TP2.</li>
+              <li><strong>Entry:</strong> Điểm vào lệnh dao động ±1 giá quanh vùng cản đề xuất.</li>
+              <li><strong>Stop Loss:</strong> Đặt sát sau đỉnh/đáy cản then chốt + 0.8 giá đệm (3.0 - 8.0 giá). Thủng cản là cắt ngay để bảo toàn vốn.</li>
+              <li><strong>Take Profit:</strong> TP1 chốt ngay trước vùng cản đối diện (≥ 1.5R), TP2 mở rộng đón trọn con sóng (≥ 2.5R).</li>
+              <li><strong>Khóa hòa vốn:</strong> Khi giá đi được 50% chặng đường đến TP1, tự động kéo SL về Breakeven.</li>
             </ul>
           </div>
 

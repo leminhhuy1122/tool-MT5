@@ -36,6 +36,8 @@ class TrackerConfig:
     max_active_signals: int = 1            # Tối đa số tín hiệu active đồng thời trên 1 symbol
     default_expiry_hours: int = 4          # Thời gian hết hạn mặc định (giờ)
     approaching_distance_pts: float = 1.5  # Khoảng cách (giá) để chuyển sang trạng thái APPROACHING
+    max_unfilled_distance_pts: float = 8.0 # Hủy lệnh chờ nếu giá chạy xa >= 8 giá theo hướng TP mà không khớp
+    unfilled_expiry_minutes: int = 45      # Hủy lệnh chờ nếu sau 45 phút chưa khớp entry
 
 
 class SignalTracker:
@@ -158,7 +160,7 @@ class SignalTracker:
             # Đã đăng ký rồi (idempotent), không từ chối nhưng cũng không duplicate
             return True
 
-        if self.is_duplicate(signal.symbol, signal.direction, signal.created_at):
+        if not getattr(signal, "is_dca", False) and self.is_duplicate(signal.symbol, signal.direction, signal.created_at):
             return False
 
         # Anti-Hedging Guard: Không cho phép đăng ký lệnh ngược chiều khi đang có lệnh active trên cùng symbol
@@ -288,6 +290,7 @@ class SignalTracker:
                 if sig.is_buy and low_price <= inval_level:
                     sig.status = SignalStatus.INVALIDATED
                     sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                    sig.invalidation = f"Giá chạm mức cản SL @ {low_price:.2f} trước khi khớp Entry"
                     changed_signals.append(sig)
                     log.info("Tín hiệu BUY [%s] bị INVALIDATED (giá %.2f chạm mức cản %.2f)",
                              sig.signal_id, low_price, inval_level)
@@ -295,10 +298,66 @@ class SignalTracker:
                 elif sig.is_sell and high_price >= inval_level:
                     sig.status = SignalStatus.INVALIDATED
                     sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                    sig.invalidation = f"Giá chạm mức cản SL @ {high_price:.2f} trước khi khớp Entry"
                     changed_signals.append(sig)
                     log.info("Tín hiệu SELL [%s] bị INVALIDATED (giá %.2f chạm mức cản %.2f)",
                              sig.signal_id, high_price, inval_level)
                     continue
+
+                # 2c. Kiểm tra Missed Move: Giá đã chạm/vượt Take Profit 1 trước khi khớp Entry -> INVALIDATED
+                if sig.is_buy and sig.take_profit_1 > 0 and high_price >= sig.take_profit_1:
+                    sig.status = SignalStatus.INVALIDATED
+                    sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                    sig.invalidation = f"Giá đã đạt mục tiêu TP1 @ {high_price:.2f} mà không hồi về Entry (Kèo đã chạy xong)"
+                    changed_signals.append(sig)
+                    log.info("Tín hiệu BUY [%s] bị INVALIDATED (Giá %.2f đã đạt TP1 %.2f trước khi khớp Entry - Kèo đã chạy mất)",
+                             sig.signal_id, high_price, sig.take_profit_1)
+                    continue
+                elif sig.is_sell and sig.take_profit_1 > 0 and low_price <= sig.take_profit_1:
+                    sig.status = SignalStatus.INVALIDATED
+                    sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                    sig.invalidation = f"Giá đã đạt mục tiêu TP1 @ {low_price:.2f} mà không hồi về Entry (Kèo đã chạy xong)"
+                    changed_signals.append(sig)
+                    log.info("Tín hiệu SELL [%s] bị INVALIDATED (Giá %.2f đã đạt TP1 %.2f trước khi khớp Entry - Kèo đã chạy mất)",
+                             sig.signal_id, low_price, sig.take_profit_1)
+                    continue
+
+                # 2d. Kiểm tra Out-of-Reach: Giá đi quá xa vùng Entry theo hướng kỳ vọng mà không khớp
+                max_unfilled_dist = getattr(self.config, "max_unfilled_distance_pts", 8.0)
+                if sig.is_buy:
+                    dist_away = current_price - sig.entry_zone_high
+                    if dist_away >= max_unfilled_dist:
+                        sig.status = SignalStatus.INVALIDATED
+                        sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                        sig.invalidation = f"Giá đi quá xa vùng Entry (+{dist_away:.1f} giá), hủy lệnh chờ để quét setup mới"
+                        changed_signals.append(sig)
+                        log.info("Tín hiệu BUY [%s] bị INVALIDATED do đi quá xa vùng Entry (+%.2f giá >= %.1f giá)",
+                                 sig.signal_id, dist_away, max_unfilled_dist)
+                        continue
+                elif sig.is_sell:
+                    dist_away = sig.entry_zone_low - current_price
+                    if dist_away >= max_unfilled_dist:
+                        sig.status = SignalStatus.INVALIDATED
+                        sig.lifecycle_status = SetupLifecycleStatus.INVALIDATED
+                        sig.invalidation = f"Giá đi quá xa vùng Entry (-{dist_away:.1f} giá), hủy lệnh chờ để quét setup mới"
+                        changed_signals.append(sig)
+                        log.info("Tín hiệu SELL [%s] bị INVALIDATED do đi quá xa vùng Entry (-%.2f giá >= %.1f giá)",
+                                 sig.signal_id, dist_away, max_unfilled_dist)
+                        continue
+
+                # 2e. Kiểm tra Timeout cho lệnh chưa khớp Entry (Mặc định sau 45 phút chưa khớp -> EXPIRED)
+                unfilled_exp_min = getattr(self.config, "unfilled_expiry_minutes", 45)
+                if sig.created_at:
+                    sig_time = sig.created_at if sig.created_at.tzinfo else sig.created_at.replace(tzinfo=timezone.utc)
+                    age_minutes = (current_time - sig_time).total_seconds() / 60.0
+                    if age_minutes >= unfilled_exp_min:
+                        sig.status = SignalStatus.EXPIRED
+                        sig.lifecycle_status = SetupLifecycleStatus.EXPIRED
+                        sig.invalidation = f"Quá thời gian chờ {unfilled_exp_min} phút mà chưa khớp Entry, hủy để đón nhịp mới"
+                        changed_signals.append(sig)
+                        log.info("Tín hiệu [%s] đã HẾT HẠN (Chờ %.1f phút >= %d phút chưa khớp Entry)",
+                                 sig.signal_id, age_minutes, unfilled_exp_min)
+                        continue
 
                 # 2c. Kiểm tra trạng thái đang tiến sát vùng entry (APPROACHING)
                 if sig.is_buy:

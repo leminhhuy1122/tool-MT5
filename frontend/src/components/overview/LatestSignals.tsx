@@ -23,10 +23,200 @@ interface LatestSignalsProps {
   currentPrice?: number;
 }
 
+export const getSignalSetupMeta = (s: SignalItem) => {
+  if (s.isDca || s.setupType?.startsWith('DCA_')) {
+    return {
+      badge: (
+        <span
+          style={{
+            padding: '2px 6px',
+            borderRadius: '4px',
+            backgroundColor: 'rgba(168, 85, 247, 0.25)',
+            color: '#C084FC',
+            fontSize: '9.5px',
+            fontWeight: 800,
+            border: '1px solid rgba(168, 85, 247, 0.5)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '3px',
+          }}
+        >
+          🎯 DCA CỨU LỆNH (X2 LÃI)
+        </span>
+      ),
+      desc: s.dcaBreakevenPrice ? `Hòa vốn giỏ: ${s.dcaBreakevenPrice.toFixed(1)} | X2 Lãi tại TP2` : 'DCA gỡ hòa & x2 lợi nhuận',
+      isTopBottom: false,
+    };
+  }
+
+  if (s.setupType === 'SMC_LIQUIDITY_SWEEP') {
+    const isSell = s.direction === 'SELL';
+    return {
+      badge: (
+        <span
+          style={{
+            padding: '2px 6px',
+            borderRadius: '4px',
+            backgroundColor: isSell ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+            color: isSell ? '#F87171' : '#34D399',
+            fontSize: '9.5px',
+            fontWeight: 800,
+            border: `1px solid ${isSell ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)'}`,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '3px',
+          }}
+        >
+          {isSell ? '🎯 BẮT ĐỈNH (BSL)' : '🎯 BẮT ĐÁY (SSL)'}
+        </span>
+      ),
+      desc: isSell ? 'Quét thanh khoản đỉnh (BSL Sweep)' : 'Quét thanh khoản đáy (SSL Sweep)',
+      isTopBottom: true,
+    };
+  }
+
+  if (s.setupType === 'RSI_DIVERGENCE') {
+    const isSell = s.direction === 'SELL';
+    return {
+      badge: (
+        <span
+          style={{
+            padding: '2px 6px',
+            borderRadius: '4px',
+            backgroundColor: 'rgba(245, 158, 11, 0.2)',
+            color: '#FBBF24',
+            fontSize: '9.5px',
+            fontWeight: 800,
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '3px',
+          }}
+        >
+          {isSell ? '⚡ BẮT ĐỈNH (RSI)' : '⚡ BẮT ĐÁY (RSI)'}
+        </span>
+      ),
+      desc: isSell ? 'Phân kỳ RSI quá mua đảo chiều' : 'Phân kỳ RSI quá bán đảo chiều',
+      isTopBottom: true,
+    };
+  }
+
+  if (s.isPredictive || s.setupType === 'PREDICTIVE_LIMIT') {
+    return {
+      badge: (
+        <span
+          style={{
+            padding: '2px 6px',
+            borderRadius: '4px',
+            backgroundColor: 'rgba(168, 85, 247, 0.2)',
+            color: '#C084FC',
+            fontSize: '9.5px',
+            fontWeight: 800,
+            border: '1px solid rgba(168, 85, 247, 0.4)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '3px',
+          }}
+        >
+          🔮 ĐÓN ĐỈNH/ĐÁY TỪ XA
+        </span>
+      ),
+      desc: 'Limit đón cản SMC chưa kiểm định',
+      isTopBottom: true,
+    };
+  }
+
+  if (s.setupType === 'SMC_ORDER_BLOCK') {
+    return {
+      badge: (
+        <span
+          style={{
+            padding: '2px 6px',
+            borderRadius: '4px',
+            backgroundColor: 'rgba(56, 189, 248, 0.15)',
+            color: '#38BDF8',
+            fontSize: '9.5px',
+            fontWeight: 800,
+            border: '1px solid rgba(56, 189, 248, 0.35)',
+          }}
+        >
+          📦 ORDER BLOCK
+        </span>
+      ),
+      desc: 'Khối lệnh tổ chức SMC',
+      isTopBottom: false,
+    };
+  }
+
+  if (s.setupType === 'SMC_FVG_RETEST') {
+    return {
+      badge: (
+        <span
+          style={{
+            padding: '2px 6px',
+            borderRadius: '4px',
+            backgroundColor: 'rgba(96, 165, 250, 0.15)',
+            color: '#60A5FA',
+            fontSize: '9.5px',
+            fontWeight: 800,
+            border: '1px solid rgba(96, 165, 250, 0.35)',
+          }}
+        >
+          ⚖️ FVG RETEST
+        </span>
+      ),
+      desc: 'Khớp khoảng trống giá Imbalance',
+      isTopBottom: false,
+    };
+  }
+
+  if (s.setupType === 'BOS_RETEST') {
+    return {
+      badge: (
+        <span
+          style={{
+            padding: '2px 6px',
+            borderRadius: '4px',
+            backgroundColor: 'rgba(52, 211, 153, 0.15)',
+            color: '#34D399',
+            fontSize: '9.5px',
+            fontWeight: 800,
+            border: '1px solid rgba(52, 211, 153, 0.35)',
+          }}
+        >
+          📈 BOS RETEST
+        </span>
+      ),
+      desc: 'Phá vỡ cấu trúc tiếp diễn',
+      isTopBottom: false,
+    };
+  }
+
+  return {
+    badge: (
+      <span
+        style={{
+          padding: '2px 6px',
+          borderRadius: '4px',
+          backgroundColor: 'rgba(148, 163, 184, 0.12)',
+          color: '#94A3B8',
+          fontSize: '9.5px',
+          fontWeight: 700,
+          border: '1px solid rgba(148, 163, 184, 0.25)',
+        }}
+      >
+        📊 {s.setupType || 'SMC SETUP'}
+      </span>
+    ),
+    desc: 'Cấu trúc thị trường SMC M5',
+    isTopBottom: false,
+  };
+};
+
 export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPrice }) => {
   const [selectedSignal, setSelectedSignal] = useState<SignalItem | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [filterMode, setFilterMode] = useState<'ALL' | 'WIN' | 'LOST' | 'ACTIVE' | 'PREDICTIVE' | 'BUY' | 'SELL'>('ALL');
+  const [filterMode, setFilterMode] = useState<'ALL' | 'WIN' | 'LOST' | 'ACTIVE' | 'SWEEP' | 'PREDICTIVE' | 'BUY' | 'SELL'>('ALL');
 
   // Admin Quick Announcement state
   const [customMsg, setCustomMsg] = useState<string>('');
@@ -41,6 +231,7 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
   const lossCount = useMemo(() => signals.filter((s) => s.isLoss || s.status === 'SL_REACHED').length, [signals]);
   const beCount = useMemo(() => signals.filter((s) => s.isBreakeven).length, [signals]);
   const activeCount = useMemo(() => signals.filter((s) => s.status === 'ACTIVE' || s.status === 'ENTRY_REACHED').length, [signals]);
+  const sweepCount = useMemo(() => signals.filter((s) => s.setupType === 'SMC_LIQUIDITY_SWEEP' || s.setupType === 'RSI_DIVERGENCE').length, [signals]);
   const predictiveCount = useMemo(() => signals.filter((s) => s.isPredictive || s.setupType === 'PREDICTIVE_LIMIT').length, [signals]);
   const buyCount = useMemo(() => signals.filter((s) => s.direction === 'BUY').length, [signals]);
   const sellCount = useMemo(() => signals.filter((s) => s.direction === 'SELL').length, [signals]);
@@ -63,7 +254,8 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
         searchTerm === '' ||
         s.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.timeframe.toLowerCase().includes(searchTerm.toLowerCase());
+        s.timeframe.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (s.setupType && s.setupType.toLowerCase().includes(searchTerm.toLowerCase()));
 
       let matchFilter = true;
       if (filterMode === 'WIN') {
@@ -72,6 +264,8 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
         matchFilter = Boolean(s.isLoss || s.status === 'SL_REACHED');
       } else if (filterMode === 'ACTIVE') {
         matchFilter = s.status === 'ACTIVE' || s.status === 'ENTRY_REACHED';
+      } else if (filterMode === 'SWEEP') {
+        matchFilter = s.setupType === 'SMC_LIQUIDITY_SWEEP' || s.setupType === 'RSI_DIVERGENCE';
       } else if (filterMode === 'PREDICTIVE') {
         matchFilter = Boolean(s.isPredictive || s.setupType === 'PREDICTIVE_LIMIT');
       } else if (filterMode === 'BUY') {
@@ -229,6 +423,7 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
                 { id: 'WIN', label: `🏆 WIN (${winCount})`, color: '#10B981' },
                 { id: 'LOST', label: `❌ LOST (${lossCount})`, color: '#EF4444' },
                 { id: 'ACTIVE', label: `⚡ Đang chạy (${activeCount})`, color: '#38BDF8' },
+                { id: 'SWEEP', label: `🎯 Bắt đỉnh/đáy (${sweepCount})`, color: '#F59E0B' },
                 { id: 'PREDICTIVE', label: `🔮 Dự đoán (${predictiveCount})`, color: '#C084FC' },
                 { id: 'BUY', label: `BUY (${buyCount})`, color: '#10B981' },
                 { id: 'SELL', label: `SELL (${sellCount})`, color: '#EF4444' },
@@ -523,27 +718,13 @@ export const LatestSignals: React.FC<LatestSignalsProps> = ({ signals, currentPr
                             {isBuy ? <TrendingUp size={12} /> : isSell ? <TrendingDown size={12} /> : null}
                             {s.direction}
                           </span>
-                          <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                               <span className="font-mono font-bold text-sm text-primary">#{s.id}</span>
-                              {(s.isPredictive || s.setupType === 'PREDICTIVE_LIMIT') && (
-                                <span
-                                  style={{
-                                    padding: '1px 5px',
-                                    borderRadius: '3px',
-                                    backgroundColor: 'rgba(168, 85, 247, 0.2)',
-                                    color: '#C084FC',
-                                    fontSize: '9px',
-                                    fontWeight: 800,
-                                    border: '1px solid rgba(168, 85, 247, 0.35)',
-                                  }}
-                                >
-                                  DỰ ĐOÁN
-                                </span>
-                              )}
+                              {getSignalSetupMeta(s).badge}
                             </div>
                             <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                              {s.timeframe} • SMC Setup
+                              {s.timeframe} • {getSignalSetupMeta(s).desc}
                             </span>
                           </div>
                         </div>

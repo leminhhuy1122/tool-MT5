@@ -110,43 +110,96 @@ class SetupCandidate:
         return self.tp_distance / sl if sl > 0 else 0.0
 
 
+def find_nearest_opposite_level(
+    direction: str,
+    entry_price: float,
+    structure: Optional[MarketStructureResult] = None,
+) -> Optional[float]:
+    """
+    Tìm mức cản đối diện (Kháng cự đỉnh cũ cho BUY, Hỗ trợ đáy cũ cho SELL)
+    để đặt mục tiêu chốt lời TP1 / TP2 sát thực tế cấu trúc nến thay vì ép cứng số giá.
+    """
+    if not structure or not structure.swings:
+        return None
+
+    dir_upper = direction.upper()
+    if dir_upper == "BUY":
+        highs = [s.price for s in structure.swings if s.swing_type == SwingType.SWING_HIGH and s.price > entry_price + 2.5]
+        if highs:
+            return min(highs)  # Đỉnh kháng cự gần nhất phía trên
+        return structure.strong_high
+    else:
+        lows = [s.price for s in structure.swings if s.swing_type == SwingType.SWING_LOW and s.price < entry_price - 2.5]
+        if lows:
+            return max(lows)  # Đáy hỗ trợ gần nhất phía dưới
+        return structure.strong_low
+
+
 def compute_gold_sl_tp(
     direction: str,
     entry_price: float,
     structure_level: Optional[float] = None,
+    opposite_target: Optional[float] = None,
     atr: float = 0.0,
-    target_sl_pts: float = 10.0,
-    max_sl_pts: float = 12.0,
+    min_sl_pts: float = 3.0,
+    max_sl_pts: float = 8.0,
+    buffer_pts: float = 0.8,
 ) -> Tuple[float, float, float]:
     """
-    Tính Stop Loss và Take Profit chuẩn xác cho Vàng XAUUSD:
-    - SL: Luôn duy trì 10 giá hoặc hơn 1 xíu (10.0 - 12.0 giá) để bảo toàn vốn tối ưu.
-    - TP1: 10.0 - 12.0 giá (R:R ~ 1:1) đảm bảo tỷ lệ chạm TP cực cao để khóa lợi nhuận và dời SL về hòa vốn.
-    - TP2: 20.0 - 24.0 giá (R:R ~ 1:2) tối ưu hóa lợi nhuận theo xu hướng.
+    Tính Stop Loss và Take Profit chuẩn xác theo Cấu Trúc Kháng Cự & Hỗ Trợ Đỉnh/Đáy:
+    - SL BUY: Đặt dưới Đáy Hỗ trợ / Đáy Order Block / Râu quét SSL - 0.8 giá đệm (thường 3.0 - 6.0 giá, tối đa 8.0 giá).
+    - SL SELL: Đặt trên Đỉnh Kháng cự / Đỉnh Order Block / Râu quét BSL + 0.8 giá đệm (thường 3.0 - 6.0 giá, tối đa 8.0 giá).
+    - TP1: Đặt ngay trước vùng cản Kháng cự (BUY) hoặc Hỗ trợ (SELL) đối diện (-0.5 giá đệm), hoặc tối thiểu 1.5R.
+    - TP2: Đặt tại cản đối diện lớn hơn hoặc tối thiểu 2.5R.
     """
     dir_upper = direction.upper()
+
     if dir_upper == "BUY":
+        # 1. Tính Stop Loss dưới đáy hỗ trợ
         if structure_level is not None and structure_level < entry_price:
-            raw_dist = (entry_price - structure_level) + 1.0  # Đặt dưới đáy + 1 giá đệm
-            sl_dist = max(target_sl_pts, min(raw_dist, max_sl_pts))
+            raw_dist = (entry_price - structure_level) + buffer_pts
+            sl_dist = max(min_sl_pts, min(raw_dist, max_sl_pts))
+        elif atr > 0:
+            sl_dist = max(min_sl_pts, min(atr * 1.5, max_sl_pts))
         else:
-            sl_dist = target_sl_pts
+            sl_dist = 4.5
 
         sl = round(entry_price - sl_dist, 2)
-        tp1 = round(entry_price + sl_dist, 2)          # TP1 = +10..12 giá
-        tp2 = round(entry_price + (sl_dist * 2.0), 2)  # TP2 = +20..24 giá
+
+        # 2. Tính Take Profit trước đỉnh kháng cự đối diện
+        if opposite_target is not None and opposite_target > entry_price + min_sl_pts:
+            target_dist = opposite_target - entry_price - 0.5  # Trừ 0.5 giá trước cản
+            tp1_dist = max(sl_dist * 1.2, min(target_dist, sl_dist * 2.5))
+        else:
+            tp1_dist = round(sl_dist * 1.5, 2)
+
+        tp1 = round(entry_price + tp1_dist, 2)
+        tp2_dist = round(max(tp1_dist * 1.5, sl_dist * 2.5), 2)
+        tp2 = round(entry_price + tp2_dist, 2)
         return sl, tp1, tp2
 
     else:  # SELL
+        # 1. Tính Stop Loss trên đỉnh kháng cự
         if structure_level is not None and structure_level > entry_price:
-            raw_dist = (structure_level - entry_price) + 1.0  # Đặt trên đỉnh + 1 giá đệm
-            sl_dist = max(target_sl_pts, min(raw_dist, max_sl_pts))
+            raw_dist = (structure_level - entry_price) + buffer_pts
+            sl_dist = max(min_sl_pts, min(raw_dist, max_sl_pts))
+        elif atr > 0:
+            sl_dist = max(min_sl_pts, min(atr * 1.5, max_sl_pts))
         else:
-            sl_dist = target_sl_pts
+            sl_dist = 4.5
 
         sl = round(entry_price + sl_dist, 2)
-        tp1 = round(entry_price - sl_dist, 2)          # TP1 = -10..12 giá
-        tp2 = round(entry_price - (sl_dist * 2.0), 2)  # TP2 = -20..24 giá
+
+        # 2. Tính Take Profit trước đáy hỗ trợ đối diện
+        if opposite_target is not None and opposite_target < entry_price - min_sl_pts:
+            target_dist = entry_price - opposite_target - 0.5  # Cộng 0.5 giá trước cản
+            tp1_dist = max(sl_dist * 1.2, min(target_dist, sl_dist * 2.5))
+        else:
+            tp1_dist = round(sl_dist * 1.5, 2)
+
+        tp1 = round(entry_price - tp1_dist, 2)
+        tp2_dist = round(max(tp1_dist * 1.5, sl_dist * 2.5), 2)
+        tp2 = round(entry_price - tp2_dist, 2)
         return sl, tp1, tp2
 
 
@@ -254,7 +307,8 @@ def _check_smc_liquidity_sweep(
     # BSL Sweep (Quét đỉnh) -> SELL
     if recent_sweep.sweep_type == SweepType.BSL_SWEEP:
         if higher_tf_trend != TrendDirection.BULLISH or recent_sweep.wick_distance >= 0.6:
-            sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=recent_sweep.extreme_price, atr=atr)
+            opp_target = find_nearest_opposite_level("SELL", close, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=recent_sweep.extreme_price, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"SMC: Quét thanh khoản đỉnh (BSL Sweep) mức {recent_sweep.swept_level:.2f}",
                 f"Râu nến từ chối giá {recent_sweep.extreme_price:.2f} (wick={recent_sweep.wick_distance:.1f} giá)",
@@ -275,7 +329,8 @@ def _check_smc_liquidity_sweep(
     # SSL Sweep (Quét đáy) -> BUY
     elif recent_sweep.sweep_type == SweepType.SSL_SWEEP:
         if higher_tf_trend != TrendDirection.BEARISH or recent_sweep.wick_distance >= 0.6:
-            sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=recent_sweep.extreme_price, atr=atr)
+            opp_target = find_nearest_opposite_level("BUY", close, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=recent_sweep.extreme_price, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"SMC: Quét thanh khoản đáy (SSL Sweep) mức {recent_sweep.swept_level:.2f}",
                 f"Râu nến rút chân từ {recent_sweep.extreme_price:.2f} (wick={recent_sweep.wick_distance:.1f} giá)",
@@ -319,7 +374,8 @@ def _check_smc_fvg_retest(
                 and structure.trend != TrendDirection.BEARISH
                 and higher_tf_trend != TrendDirection.BEARISH
                 and rsi < 65):
-            sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=fvg.bottom, atr=atr)
+            opp_target = find_nearest_opposite_level("BUY", close, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=fvg.bottom, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"SMC: Retest Bullish FVG [{fvg.bottom:.2f} - {fvg.top:.2f}]",
                 f"Độ rộng Imbalance={fvg.size:.1f} giá | Mức CE={fvg.midpoint:.2f}",
@@ -344,7 +400,8 @@ def _check_smc_fvg_retest(
                 and structure.trend != TrendDirection.BULLISH
                 and higher_tf_trend != TrendDirection.BULLISH
                 and rsi > 35):
-            sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=fvg.top, atr=atr)
+            opp_target = find_nearest_opposite_level("SELL", close, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=fvg.top, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"SMC: Retest Bearish FVG [{fvg.bottom:.2f} - {fvg.top:.2f}]",
                 f"Độ rộng Imbalance={fvg.size:.1f} giá | Mức CE={fvg.midpoint:.2f}",
@@ -387,7 +444,8 @@ def _check_smc_order_block(
                 and structure.trend != TrendDirection.BEARISH
                 and higher_tf_trend != TrendDirection.BEARISH
                 and rsi < 65):
-            sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=ob.low, atr=atr)
+            opp_target = find_nearest_opposite_level("BUY", close, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=ob.low, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"SMC: Chạm vùng Bullish Order Block [{ob.low:.2f} - {ob.high:.2f}]",
                 "Khối lệnh tổ chức mua phòng thủ",
@@ -411,7 +469,8 @@ def _check_smc_order_block(
                 and structure.trend != TrendDirection.BULLISH
                 and higher_tf_trend != TrendDirection.BULLISH
                 and rsi > 35):
-            sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=ob.high, atr=atr)
+            opp_target = find_nearest_opposite_level("SELL", close, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=ob.high, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"SMC: Chạm vùng Bearish Order Block [{ob.low:.2f} - {ob.high:.2f}]",
                 "Khối lệnh tổ chức bán phân phối",
@@ -524,7 +583,8 @@ def _check_bos_setup(
             and rsi < 70):
         recent_lows = [s for s in structure.swings if s.swing_type == SwingType.SWING_LOW]
         ref_low = recent_lows[-1].price if recent_lows else last_bos.broken_level - 5.0
-        sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=ref_low, atr=atr)
+        opp_target = find_nearest_opposite_level("BUY", close, structure)
+        sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=ref_low, opposite_target=opp_target, atr=atr)
         reasons = [
             "BOS Bullish",
             f"Retest mức {last_bos.broken_level:.2f}",
@@ -550,7 +610,8 @@ def _check_bos_setup(
             and rsi > 30):
         recent_highs = [s for s in structure.swings if s.swing_type == SwingType.SWING_HIGH]
         ref_high = recent_highs[-1].price if recent_highs else last_bos.broken_level + 5.0
-        sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=ref_high, atr=atr)
+        opp_target = find_nearest_opposite_level("SELL", close, structure)
+        sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=ref_high, opposite_target=opp_target, atr=atr)
         reasons = [
             "BOS Bearish",
             f"Retest mức {last_bos.broken_level:.2f}",
@@ -586,7 +647,8 @@ def _check_rsi_extreme(
             and higher_tf_trend != TrendDirection.BEARISH):
         supports = [z for z in structure.sr_zones if z.zone_type == "SUPPORT" and z.price < close]
         ref_support = supports[-1].price if supports else None
-        sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=ref_support, atr=atr)
+        opp_target = find_nearest_opposite_level("BUY", close, structure)
+        sl, tp1, tp2 = compute_gold_sl_tp("BUY", close, structure_level=ref_support, opposite_target=opp_target, atr=atr)
         return SetupCandidate(
             setup_type=SetupType.RSI_DIVERGENCE,
             direction="BUY",
@@ -609,7 +671,8 @@ def _check_rsi_extreme(
             and higher_tf_trend != TrendDirection.BULLISH):
         resistances = [z for z in structure.sr_zones if z.zone_type == "RESISTANCE" and z.price > close]
         ref_resistance = resistances[0].price if resistances else None
-        sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=ref_resistance, atr=atr)
+        opp_target = find_nearest_opposite_level("SELL", close, structure)
+        sl, tp1, tp2 = compute_gold_sl_tp("SELL", close, structure_level=ref_resistance, opposite_target=opp_target, atr=atr)
         return SetupCandidate(
             setup_type=SetupType.RSI_DIVERGENCE,
             direction="SELL",
@@ -678,7 +741,8 @@ def _check_predictive_limit_setups(
             target_ob = bull_obs[0]
             entry_p = round(target_ob.midpoint, 2)
             dist = round(close - entry_p, 1)
-            sl, tp1, tp2 = compute_gold_sl_tp("BUY", entry_p, structure_level=target_ob.low, atr=atr)
+            opp_target = find_nearest_opposite_level("BUY", entry_p, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("BUY", entry_p, structure_level=target_ob.low, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"🔮 DỰ ĐOÁN TỪ XA: Đón sóng hồi tại Unmitigated Bullish Order Block [{target_ob.low:.2f} - {target_ob.high:.2f}]",
                 f"Vùng đón cách giá hiện tại {dist:.1f} giá (Kế hoạch đón trước, không vào lệnh vội)",
@@ -700,7 +764,8 @@ def _check_predictive_limit_setups(
             target_sup = supports[0]
             entry_p = round(target_sup.price, 2)
             dist = round(close - entry_p, 1)
-            sl, tp1, tp2 = compute_gold_sl_tp("BUY", entry_p, structure_level=entry_p - 1.0, atr=atr)
+            opp_target = find_nearest_opposite_level("BUY", entry_p, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("BUY", entry_p, structure_level=entry_p - 1.0, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"🔮 DỰ ĐOÁN TỪ XA: Canh Buy Limit đón phản ứng tại Vùng Hỗ Trợ {target_sup.price:.2f}",
                 f"Vùng hỗ trợ cách giá hiện tại {dist:.1f} giá -> Cho phép Trader chủ động cài Limit trước",
@@ -731,7 +796,8 @@ def _check_predictive_limit_setups(
             target_ob = bear_obs[0]
             entry_p = round(target_ob.midpoint, 2)
             dist = round(entry_p - close, 1)
-            sl, tp1, tp2 = compute_gold_sl_tp("SELL", entry_p, structure_level=target_ob.high, atr=atr)
+            opp_target = find_nearest_opposite_level("SELL", entry_p, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("SELL", entry_p, structure_level=target_ob.high, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"🔮 DỰ ĐOÁN TỪ XA: Đón sóng phân phối tại Unmitigated Bearish Order Block [{target_ob.low:.2f} - {target_ob.high:.2f}]",
                 f"Vùng đón cách giá hiện tại {dist:.1f} giá (Kế hoạch đón trước, không vào lệnh vội)",
@@ -753,7 +819,8 @@ def _check_predictive_limit_setups(
             target_res = resistances[0]
             entry_p = round(target_res.price, 2)
             dist = round(entry_p - close, 1)
-            sl, tp1, tp2 = compute_gold_sl_tp("SELL", entry_p, structure_level=entry_p + 1.0, atr=atr)
+            opp_target = find_nearest_opposite_level("SELL", entry_p, structure)
+            sl, tp1, tp2 = compute_gold_sl_tp("SELL", entry_p, structure_level=entry_p + 1.0, opposite_target=opp_target, atr=atr)
             reasons = [
                 f"🔮 DỰ ĐOÁN TỪ XA: Canh Sell Limit đón phản ứng tại Vùng Kháng Cự {target_res.price:.2f}",
                 f"Vùng kháng cự cách giá hiện tại {dist:.1f} giá -> Cho phép Trader chủ động cài Limit trước",

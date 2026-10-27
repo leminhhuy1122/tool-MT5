@@ -353,6 +353,8 @@ class MarketRegimeDetector:
                 SetupType.EMA_BOUNCE,
                 SetupType.SMC_ORDER_BLOCK,
                 SetupType.PREDICTIVE_LIMIT,
+                SetupType.SMC_LIQUIDITY_SWEEP,  # Bắt đỉnh khi có bẫy quét thanh khoản BSL
+                SetupType.RSI_DIVERGENCE,        # Bắt đỉnh đảo chiều khi phân kỳ RSI
             ]
             cushion_multiplier = 1.0
             min_confluence_score = 65.0
@@ -364,6 +366,8 @@ class MarketRegimeDetector:
                 SetupType.EMA_BOUNCE,
                 SetupType.SMC_ORDER_BLOCK,
                 SetupType.PREDICTIVE_LIMIT,
+                SetupType.SMC_LIQUIDITY_SWEEP,  # Bắt đáy khi có bẫy quét thanh khoản SSL
+                SetupType.RSI_DIVERGENCE,        # Bắt đáy đảo chiều khi phân kỳ RSI
             ]
             cushion_multiplier = 1.0
             min_confluence_score = 65.0

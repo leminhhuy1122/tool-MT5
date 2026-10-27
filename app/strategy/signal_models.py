@@ -110,6 +110,12 @@ class TradingSignal:
     max_favorable_pnl: float = 0.0         # Mức lãi lớn nhất từng đạt được (points)
     trailing_mode: str = "NONE"            # ATR_DYNAMIC, SWING_STRUCTURE, BREAKEVEN
 
+    # Smart Recovery DCA (Phase 13)
+    is_dca: bool = False                   # Có phải tín hiệu DCA cứu lệnh không
+    parent_signal_id: Optional[str] = None # ID lệnh gốc cần cứu hòa vốn
+    dca_breakeven_price: Optional[float] = None # Điểm hòa vốn trung bình của giỏ lệnh (Basket BE)
+    dca_step: int = 0                      # Bước DCA (1: lệnh cứu đầu tiên)
+
     def __post_init__(self):
         if not self.setup_id and self.signal_id:
             self.setup_id = f"setup_{self.signal_id}"
@@ -186,6 +192,10 @@ class TradingSignal:
             "is_predictive": self.is_predictive,
             "reasons": self.reasons,
             "invalidation": self.invalidation,
+            "is_dca": self.is_dca,
+            "parent_signal_id": self.parent_signal_id,
+            "dca_breakeven_price": self.dca_breakeven_price,
+            "dca_step": self.dca_step,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "revalidated_at": self.revalidated_at.isoformat() if self.revalidated_at else None,
@@ -298,6 +308,10 @@ class TradingSignal:
             structure_context=struct_ctx if isinstance(struct_ctx, dict) else {},
             reasons=list(reasons),
             invalidation=str(data.get("invalidation", "")),
+            is_dca=bool(data.get("is_dca", False)),
+            parent_signal_id=data.get("parent_signal_id"),
+            dca_breakeven_price=float(data.get("dca_breakeven_price")) if data.get("dca_breakeven_price") is not None else None,
+            dca_step=int(data.get("dca_step", 0)),
             created_at=created_at,
             expires_at=expires_at,
             revalidated_at=revalidated_at,

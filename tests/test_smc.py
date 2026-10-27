@@ -173,31 +173,40 @@ def test_discount_premium_equilibrium():
 
 def test_compute_gold_sl_tp_rule():
     """
-    Quy tắc cốt lõi của người dùng:
-    - SL 10 giá hoặc hơn 1 xíu thôi (10.0 - 12.0 giá).
-    - Cấu trúc lệnh hợp lý, TP1 10-12 giá (tỷ lệ ăn TP cao), TP2 20-24 giá.
+    Quy tắc tính SL/TP động theo Cấu Trúc Kháng Cự & Hỗ Trợ Đỉnh/Đáy:
+    - SL BUY: Đặt dưới đáy hỗ trợ + 0.8 giá đệm (tối thiểu 3.0 giá, tối đa 8.0 giá).
+    - SL SELL: Đặt trên đỉnh kháng cự + 0.8 giá đệm (tối thiểu 3.0 giá, tối đa 8.0 giá).
+    - TP1: Đặt trước vùng cản đối diện hoặc đạt tối thiểu 1.5R.
+    - TP2: Đón trọn con sóng tại 2.5R.
     """
-    # 1. Test lệnh BUY
+    # 1. Test lệnh BUY với đáy hỗ trợ cách 3.5 giá
     entry_buy = 2050.0
-    sl, tp1, tp2 = compute_gold_sl_tp("BUY", entry_buy, structure_level=2042.0, atr=2.5)
-    sl_dist = abs(entry_buy - sl)
-    tp1_dist = abs(tp1 - entry_buy)
-    tp2_dist = abs(tp2 - entry_buy)
+    structure_low = 2046.5  # Cách 3.5 giá
+    opp_high = 2058.0       # Đỉnh kháng cự cách 8.0 giá
+    sl, tp1, tp2 = compute_gold_sl_tp("BUY", entry_buy, structure_level=structure_low, opposite_target=opp_high, atr=2.5)
+    sl_dist = round(abs(entry_buy - sl), 2)
+    tp1_dist = round(abs(tp1 - entry_buy), 2)
+    tp2_dist = round(abs(tp2 - entry_buy), 2)
 
-    assert 10.0 <= sl_dist <= 12.0, f"SL BUY {sl_dist} phải từ 10.0 đến 12.0 giá"
-    assert 10.0 <= tp1_dist <= 12.0, f"TP1 BUY {tp1_dist} phải từ 10.0 đến 12.0 giá"
-    assert 20.0 <= tp2_dist <= 24.0, f"TP2 BUY {tp2_dist} phải từ 20.0 đến 24.0 giá"
+    # raw_dist = (2050 - 2046.5) + 0.8 = 4.3 giá
+    assert sl_dist == 4.3, f"SL BUY {sl_dist} phải bằng 4.3 giá"
+    # tp1 đặt trước cản 2058 - 0.5 = 2057.5 (+7.5 giá)
+    assert tp1 == 2057.5, f"TP1 BUY {tp1} phải chốt trước cản 2057.5"
+    assert tp2_dist >= sl_dist * 2.0, f"TP2 BUY {tp2_dist} phải >= 2.0R"
 
-    # 2. Test lệnh SELL
+    # 2. Test lệnh SELL với đỉnh kháng cự cách 4.0 giá
     entry_sell = 2050.0
-    sl_s, tp1_s, tp2_s = compute_gold_sl_tp("SELL", entry_sell, structure_level=2065.0, atr=3.0)
-    sl_dist_s = abs(sl_s - entry_sell)
-    tp1_dist_s = abs(entry_sell - tp1_s)
-    tp2_dist_s = abs(entry_sell - tp2_s)
+    structure_high = 2054.0  # Cách 4.0 giá
+    opp_low = 2040.0         # Đáy hỗ trợ cách 10.0 giá
+    sl_s, tp1_s, tp2_s = compute_gold_sl_tp("SELL", entry_sell, structure_level=structure_high, opposite_target=opp_low, atr=3.0)
+    sl_dist_s = round(abs(sl_s - entry_sell), 2)
+    tp1_dist_s = round(abs(entry_sell - tp1_s), 2)
+    tp2_dist_s = round(abs(entry_sell - tp2_s), 2)
 
-    assert 10.0 <= sl_dist_s <= 12.0, f"SL SELL {sl_dist_s} phải từ 10.0 đến 12.0 giá"
-    assert 10.0 <= tp1_dist_s <= 12.0, f"TP1 SELL {tp1_dist_s} phải từ 10.0 đến 12.0 giá"
-    assert 20.0 <= tp2_dist_s <= 24.0, f"TP2 SELL {tp2_dist_s} phải từ 20.0 đến 24.0 giá"
+    # raw_dist = (2054 - 2050) + 0.8 = 4.8 giá
+    assert sl_dist_s == 4.8, f"SL SELL {sl_dist_s} phải bằng 4.8 giá"
+    assert tp1_s < entry_sell
+    assert tp2_dist_s >= sl_dist_s * 2.0
 
 
 def test_analyze_smc_comprehensive():

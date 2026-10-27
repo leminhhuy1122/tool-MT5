@@ -91,7 +91,11 @@ def apply_filters(
 
     # 2. Trend Alignment Filter
     if config.require_trend_alignment:
-        if candidate.direction == "BUY" and higher_tf_trend == TrendDirection.BEARISH:
+        from app.strategy.setup_detector import SetupType
+        # Cho phép SMC Liquidity Sweep & RSI Divergence bắt đỉnh/đáy đảo chiều
+        if candidate.setup_type in (SetupType.SMC_LIQUIDITY_SWEEP, SetupType.RSI_DIVERGENCE):
+            passed.append(f"Bắt đỉnh/đáy đảo chiều ({candidate.setup_type.value}, H4 {higher_tf_trend.value})")
+        elif candidate.direction == "BUY" and higher_tf_trend == TrendDirection.BEARISH:
             rejected.append("BUY ngược trend H4 (BEARISH)")
         elif candidate.direction == "SELL" and higher_tf_trend == TrendDirection.BULLISH:
             rejected.append("SELL ngược trend H4 (BULLISH)")

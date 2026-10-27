@@ -8,17 +8,19 @@ import {
   Zap,
 } from 'lucide-react';
 import { api } from '../../services/api';
-import type { MenuId, PaperWalletOverviewSummary } from '../../types';
+import type { MenuId, PaperWalletOverviewSummary, SignalItem } from '../../types';
 
 interface PaperWalletHeroCardProps {
   paperWallet?: PaperWalletOverviewSummary;
   currentPrice?: number;
+  signals?: SignalItem[];
   onNavigateToWallet?: (menu: MenuId) => void;
   onRefresh?: () => void;
 }
 
 export const PaperWalletHeroCard: React.FC<PaperWalletHeroCardProps> = ({
   paperWallet,
+  signals,
   onNavigateToWallet,
   onRefresh,
 }) => {
@@ -45,6 +47,7 @@ export const PaperWalletHeroCard: React.FC<PaperWalletHeroCardProps> = ({
   const isProfit = floatingPnl >= 0;
   const hasOpenOrder = openCount > 0 && openPositions && openPositions.length > 0;
   const activePos = hasOpenOrder ? openPositions[0] : null;
+  const pendingSignal = signals?.find((s) => s.status === 'ACTIVE');
   const floatingPct = balance > 0 ? (floatingPnl / balance) * 100 : 0;
 
   const handleManualClose = async (positionId: string) => {
@@ -200,6 +203,25 @@ export const PaperWalletHeroCard: React.FC<PaperWalletHeroCardProps> = ({
                 {closingId === activePos.position_id ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
                 Chốt Lệnh
               </button>
+            </div>
+          ) : pendingSignal ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  backgroundColor: pendingSignal.direction === 'SELL' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                  border: `1px dashed ${pendingSignal.direction === 'SELL' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)'}`,
+                  color: pendingSignal.direction === 'SELL' ? '#FCA5A5' : '#86EFAC',
+                }}
+              >
+                CHỜ ENTRY: {pendingSignal.direction} 0.01L
+              </span>
+              <span style={{ fontSize: '11px', color: '#CBD5E1', fontFamily: 'monospace' }}>
+                @ ${(pendingSignal.plannedEntry || pendingSignal.entryZone?.[0] || 0).toFixed(2)} (Sẵn sàng khớp khi chạm)
+              </span>
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px' }}>

@@ -356,6 +356,23 @@ class SignalEngine:
                 invalidation=candidate.invalidation,
             )
 
+            # Cấu hình thuộc tính Smart DCA Cứu Lệnh & X2 Lợi Nhuận
+            if getattr(conflict_decision, "is_dca", False):
+                signal.is_dca = True
+                signal.parent_signal_id = conflict_decision.parent_signal_id
+                signal.dca_breakeven_price = conflict_decision.breakeven_price
+                signal.dca_step = 1
+                signal.setup_type = f"DCA_{candidate.setup_type.value}"
+                be_buf = 0.5 if signal.is_buy else -0.5
+                if conflict_decision.breakeven_price is not None:
+                    signal.take_profit_1 = round(conflict_decision.breakeven_price + be_buf, 2)
+                    signal.tp_distance = round(abs(signal.take_profit_1 - signal.entry_price), 2)
+                parent_sig = next((s for s in self.tracker.active_signals if s.signal_id == conflict_decision.parent_signal_id), None)
+                if parent_sig and parent_sig.take_profit_1 > 0:
+                    signal.take_profit_2 = parent_sig.take_profit_1
+                p_id_short = conflict_decision.parent_signal_id[:8] if conflict_decision.parent_signal_id else ""
+                signal.reasons.insert(0, f"DCA cứu lệnh #{p_id_short} (Hòa vốn giỏ: {conflict_decision.breakeven_price:.2f}, X2 lãi tại TP2)")
+
             # 7e. Lọc qua ML Signal Filter (nếu có và đang hoạt động)
             if self.ml_filter is not None and getattr(self.ml_filter, "is_active", False):
                 signal = self.ml_filter.apply(signal, df=working_df, spread=current_spread or 0.3)

@@ -84,6 +84,30 @@ def format_signal_message(signal: TradingSignal) -> str:
     # TP2 nếu có
     tp2_line = f"\n✅ <b>TP2:</b> <code>{signal.take_profit_2:.1f}</code>" if signal.take_profit_2 > 0 else ""
 
+    # Tín Hiệu DCA Cứu Lệnh Về Hòa & X2 Lợi Nhuận (Smart Recovery DCA)
+    if getattr(signal, "is_dca", False) or (signal.setup_type and signal.setup_type.startswith("DCA_")):
+        be_line = f"⚖️ <b>HÒA VỐN GIỎ LỆNH:</b> <code>{signal.dca_breakeven_price:.1f}</code> (Gỡ hòa toàn bộ)\n" if getattr(signal, "dca_breakeven_price", None) else ""
+        parent_id_short = signal.parent_signal_id[:8] if getattr(signal, "parent_signal_id", None) else ""
+        parent_line = f"🔗 <b>Lệnh gốc cứu:</b> <code>#{parent_id_short}</code>\n" if parent_id_short else ""
+        reasons_bullet = "\n".join(f"• <i>{r}</i>" for r in signal.reasons[:3]) if signal.reasons else "• <i>Hạ giá vốn vị thế tại vùng cản cứng</i>"
+        tp2_str = f"\n🚀 <b>TP2 (Kỳ vọng X2 Lãi):</b> <code>{signal.take_profit_2:.1f}</code> (Chạm TP gốc ban đầu)" if signal.take_profit_2 > 0 else ""
+        return (
+            f"🎯 <b>TÍN HIỆU DCA CỨU LỆNH — GỠ HÒA & X2 LỢI NHUẬN</b>\n"
+            f"{icon} <b>{action} {sym} (DCA #1): <code>{signal.entry_price:.1f}</code></b>\n"
+            f"⏱ Khung: {signal.timeframe} | Mã: <code>#{signal.signal_id}</code>\n"
+            f"{parent_line}"
+            f"{be_line}"
+            f"❌ <b>SL Giỏ Lệnh:</b> <code>{signal.stop_loss:.1f}</code> ({signal.sl_distance:.1f} giá)\n"
+            f"🛡 <b>TP1 (Hòa vốn an toàn):</b> <code>{signal.take_profit_1:.1f}</code> ({signal.tp_distance:.1f} giá)"
+            f"{tp2_str}\n"
+            f"⚖️ R:R: 1:{signal.risk_reward_ratio:.1f} | Điểm Confluence: <b>{signal.score:.0f}/100</b> [<code>{_render_score_bar(signal.score)}</code>]\n\n"
+            f"💡 <b>Kế hoạch quản trị giỏ lệnh (Basket Plan):</b>\n"
+            f"{reasons_bullet}\n"
+            "• <b>Mục tiêu 1 (An toàn):</b> Giá hồi về TP1 chạm điểm hòa vốn ➜ Đóng bảo toàn vốn 100%!\n"
+            "• <b>Mục tiêu 2 (Đột phá):</b> Giá quay lại TP2 ➜ Cả 2 lệnh cùng thắng lớn (X2 LỢI NHUẬN)!\n"
+            f"⏰ <i>{time_str} (VN) | {signal.strategy_version}</i>"
+        )
+
     # Kế hoạch Dự Đoán Từ Xa (PREDICTIVE LIMIT SETUP)
     if signal.setup_type == "PREDICTIVE_LIMIT":
         reasons_bullet = "\n".join(f"• <i>{r}</i>" for r in signal.reasons[:3]) if signal.reasons else "• <i>Phân tích khối lệnh tổ chức & Vùng cản chưa kiểm định</i>"
@@ -102,6 +126,50 @@ def format_signal_message(signal: TradingSignal) -> str:
             "• Kế hoạch đón trước — Chưa vào lệnh tại giá thị trường hiện tại.\n"
             "• Trader có thể cài sẵn lệnh Limit hoặc đặt chuông cảnh báo giá.\n"
             "• Khi giá về vùng đón, Bot sẽ gửi thông báo khớp lệnh!\n"
+            f"⏰ <i>{time_str} (VN) | {signal.strategy_version}</i>"
+        )
+
+    # Săn Thanh Khoản Bắt Đỉnh / Bắt Đáy (SMC LIQUIDITY SWEEP)
+    if signal.setup_type == "SMC_LIQUIDITY_SWEEP":
+        is_top = (action == "SELL")
+        sweep_title = "🎯 <b>BẮT ĐỈNH (BSL SWEEP) — BẪY QUÉT THANH KHOẢN ĐỈNH</b>" if is_top else "🎯 <b>BẮT ĐÁY (SSL SWEEP) — BẪY QUÉT THANH KHOẢN ĐÁY</b>"
+        reasons_bullet = "\n".join(f"• <i>{r}</i>" for r in signal.reasons[:3]) if signal.reasons else "• <i>Râu nến quét thanh khoản swing và đóng nến quay đầu đảo chiều</i>"
+        return (
+            f"{sweep_title}\n"
+            f"{icon} <b>{action} {sym}: <code>{signal.entry_price:.1f}</code></b>\n"
+            f"⏱ Khung: {signal.timeframe} | Mã: <code>#{signal.signal_id}</code>\n\n"
+            f"📍 <b>Vùng Entry:</b> <code>{signal.entry_zone_low:.1f} – {signal.entry_zone_high:.1f}</code>\n"
+            f"❌ <b>SL:</b> <code>{signal.stop_loss:.1f}</code> ({signal.sl_distance:.1f} giá)\n"
+            f"✅ <b>TP1:</b> <code>{signal.take_profit_1:.1f}</code> ({signal.tp_distance:.1f} giá)"
+            f"{tp2_line}\n"
+            f"⚖️ R:R: 1:{signal.risk_reward_ratio:.1f} | Điểm Confluence: <b>{signal.score:.0f}/100</b> [<code>{_render_score_bar(signal.score)}</code>] ({signal.confidence})"
+            f"{_format_breakdown_summary(signal.score_breakdown)}\n\n"
+            f"💡 <b>Phân tích bẫy giá SMC:</b>\n{reasons_bullet}\n\n"
+            "👉 <b>Lưu ý quản lý lệnh:</b>\n"
+            "• Nến đã xác nhận bẫy thanh khoản (Fakeout / Stop Hunt).\n"
+            "• Entry ±1 giá | Lãi 5 giá dời SL về BE | Lãi 10 giá chốt TP1!\n"
+            f"⏰ <i>{time_str} (VN) | {signal.strategy_version}</i>"
+        )
+
+    # Đảo Chiều Phân Kỳ RSI (RSI DIVERGENCE)
+    if signal.setup_type == "RSI_DIVERGENCE":
+        is_top = (action == "SELL")
+        div_title = "⚡ <b>BẮT ĐỈNH ĐẢO CHIỀU — PHÂN KỲ RSI QUÁ MUA</b>" if is_top else "⚡ <b>BẮT ĐÁY ĐẢO CHIỀU — PHÂN KỲ RSI QUÁ BÁN</b>"
+        reasons_bullet = "\n".join(f"• <i>{r}</i>" for r in signal.reasons[:3]) if signal.reasons else "• <i>Động lượng RSI phân kỳ cực đại tại vùng cản</i>"
+        return (
+            f"{div_title}\n"
+            f"{icon} <b>{action} {sym}: <code>{signal.entry_price:.1f}</code></b>\n"
+            f"⏱ Khung: {signal.timeframe} | Mã: <code>#{signal.signal_id}</code>\n\n"
+            f"📍 <b>Vùng Entry:</b> <code>{signal.entry_zone_low:.1f} – {signal.entry_zone_high:.1f}</code>\n"
+            f"❌ <b>SL:</b> <code>{signal.stop_loss:.1f}</code> ({signal.sl_distance:.1f} giá)\n"
+            f"✅ <b>TP1:</b> <code>{signal.take_profit_1:.1f}</code> ({signal.tp_distance:.1f} giá)"
+            f"{tp2_line}\n"
+            f"⚖️ R:R: 1:{signal.risk_reward_ratio:.1f} | Điểm Confluence: <b>{signal.score:.0f}/100</b> [<code>{_render_score_bar(signal.score)}</code>] ({signal.confidence})"
+            f"{_format_breakdown_summary(signal.score_breakdown)}\n\n"
+            f"💡 <b>Tín hiệu kỹ thuật:</b>\n{reasons_bullet}\n\n"
+            "👉 <b>Lưu ý quản lý lệnh:</b>\n"
+            "• Phân kỳ động lượng tại cản then chốt.\n"
+            "• Entry ±1 giá | Lãi 5 giá dời SL về BE | Lãi 10 giá chốt TP1!\n"
             f"⏰ <i>{time_str} (VN) | {signal.strategy_version}</i>"
         )
 

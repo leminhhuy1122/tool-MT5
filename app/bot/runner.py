@@ -110,9 +110,10 @@ class LiveBotRunner:
         exit_cfg = getattr(self.settings, "smart_exit", None)
         self.smart_exit = SmartExitEngine(config=exit_cfg)
 
-        # 4e. Cấu hình Hedging Chiến Lược (Strategic Zone Hedging)
-        from config import HedgingConfig
+        # 4e. Cấu hình Hedging Chiến Lược & Smart DCA Recovery
+        from config import HedgingConfig, DCAConfig
         self.hedging_cfg = getattr(self.settings, "hedging", None) or HedgingConfig()
+        self.dca_cfg = getattr(self.settings, "dca", None) or DCAConfig()
 
         # 4f. AI Trading Copilot Companion (Đồng hành đàm đạo thời gian thực)
         from app.strategy.ai_companion import AITradingCopilot
@@ -128,7 +129,12 @@ class LiveBotRunner:
         )
 
         # 5. Bộ theo dõi tín hiệu (Khôi phục trạng thái active từ SQLite để chống trùng lặp khi khởi động lại)
-        self.tracker = SignalTracker(config=TrackerConfig(cooldown_minutes=45, max_active_signals=3))
+        self.tracker = SignalTracker(config=TrackerConfig(
+            cooldown_minutes=45,
+            max_active_signals=3,
+            max_unfilled_distance_pts=8.0,
+            unfilled_expiry_minutes=45,
+        ))
         try:
             active_rows = self.signal_repo.get_active_signals(self.symbol)
             if active_rows:
@@ -249,9 +255,26 @@ class LiveBotRunner:
                 log.info("⚡ Tín hiệu [%s] thay đổi trạng thái: %s @ %.2f",
                          sig.signal_id, sig.status.value, current_price)
 
-                # Cập nhật vào SQLite
-                self.signal_repo.update_status(sig.signal_id, sig.status)
-                if sig.status in (SignalStatus.TP_REACHED, SignalStatus.SL_REACHED):
+                # Cập nhật vào SQLite kèm lý do nếu bị invalidation
+                self.signal_repo.update_status(
+                    sig.signal_id,
+                    sig.status,
+                    invalidation=getattr(sig, "invalidation", None),
+                )
+                # 1. KHI TÍN HIỆU CHÍNH THỨC KHỚP VÙNG ENTRY -> KHỚP LỆNH VÍ ẢO 1:1
+                if sig.status == SignalStatus.ENTRY_REACHED:
+                    try:
+                        spread = float(price_info.get("spread", 0.3)) if price_info else 0.3
+                        self.paper_engine.open_position_from_signal(
+                            signal=sig,
+                            current_price=current_price,
+                            spread=spread,
+                        )
+                    except Exception as e:
+                        log.debug("Lỗi khớp lệnh Paper Wallet khi ENTRY_REACHED: %s", e)
+
+                # 2. KHI TÍN HIỆU ĐẠT TP HOẶC SL -> ĐÓNG VỊ THẾ VÀ TÍNH PNL THẬT
+                elif sig.status in (SignalStatus.TP_REACHED, SignalStatus.SL_REACHED):
                     pnl_pts = (current_price - sig.entry_price) if sig.direction == SignalDirection.BUY else (sig.entry_price - current_price)
                     diff_sec = None
                     duration_str = None
@@ -298,6 +321,17 @@ class LiveBotRunner:
                         self.ai_copilot.clear_signal(sig.signal_id)
                     except Exception:
                         pass
+
+                # 3. KHI TÍN HIỆU BỊ HỦY / HẾT HẠN TRƯỚC HOẶC TRONG KHI KHỚP
+                elif sig.status in (SignalStatus.INVALIDATED, SignalStatus.CANCELLED, SignalStatus.EXPIRED):
+                    try:
+                        self.paper_engine.close_position_by_signal(
+                            signal_id=sig.signal_id,
+                            current_price=current_price,
+                            reason=sig.status.value,
+                        )
+                    except Exception as e:
+                        log.debug("Lỗi đóng/hủy lệnh Paper Wallet khi tín hiệu bị hủy: %s", e)
 
                     # Tự động cập nhật ma trận thích ứng Self-Learning
                     try:
@@ -436,10 +470,50 @@ class LiveBotRunner:
                          final_signal.direction.value, self.symbol,
                          final_signal.entry_price, final_signal.score)
 
-                # Chống trùng lặp & Anti-Hedging Guard: Kiểm tra trực tiếp cả ở Database SQLite
+                # Chống trùng lặp & Smart DCA Recovery Guard: Kiểm tra trực tiếp cả ở Database SQLite
                 active_in_db = self.signal_repo.get_active_signals(self.symbol)
                 for s in active_in_db:
                     if s.get("direction") == final_signal.direction.value:
+                        # 1. Kiểm tra nếu là tín hiệu Smart DCA hợp lệ đã được gắn cờ
+                        if getattr(final_signal, "is_dca", False):
+                            log.info(
+                                "🎯 CHO PHÉP LỆNH DCA: Lệnh gốc %s [%s] @ %.2f -> Lệnh DCA mới @ %.2f (Hòa vốn: %.2f)",
+                                final_signal.direction.value, s.get("signal_id"), float(s.get("entry_price", 0.0)),
+                                final_signal.entry_price, getattr(final_signal, "dca_breakeven_price", 0.0),
+                            )
+                            break
+
+                        # 2. Hoặc kiểm tra điều kiện kích hoạt DCA trực tiếp từ DB
+                        if getattr(self.dca_cfg, "enabled", True):
+                            existing_entry = float(s.get("entry_price", 0.0))
+                            drawdown = (existing_entry - final_signal.entry_price) if final_signal.direction == SignalDirection.BUY else (final_signal.entry_price - existing_entry)
+                            min_dist = getattr(self.dca_cfg, "min_drawdown_distance", 3.5)
+
+                            already_has_dca = any(
+                                (act.get("parent_signal_id") == s.get("signal_id") or act.get("is_dca") == 1)
+                                for act in active_in_db
+                            )
+
+                            if drawdown >= min_dist and not already_has_dca:
+                                P_be = round((existing_entry + final_signal.entry_price) / 2.0, 2)
+                                final_signal.is_dca = True
+                                final_signal.parent_signal_id = s.get("signal_id")
+                                final_signal.dca_breakeven_price = P_be
+                                final_signal.dca_step = 1
+                                final_signal.setup_type = f"DCA_{final_signal.setup_type}" if not final_signal.setup_type.startswith("DCA_") else final_signal.setup_type
+                                be_buf = 0.5 if final_signal.is_buy else -0.5
+                                final_signal.take_profit_1 = round(P_be + be_buf, 2)
+                                if float(s.get("take_profit_1", 0.0)) > 0:
+                                    final_signal.take_profit_2 = float(s.get("take_profit_1", 0.0))
+                                p_id_short = str(s.get("signal_id", ""))[:8]
+                                final_signal.reasons.insert(0, f"DCA cứu lệnh #{p_id_short} (Hòa vốn giỏ: {P_be:.2f}, X2 lãi tại TP2)")
+                                log.info(
+                                    "🔥 KÍCH HOẠT SMART DCA: Lệnh gốc %s [%s] @ %.2f (âm %.1f giá) -> Khớp DCA @ %.2f (Hòa vốn: %.2f | X2 lãi @ %.2f)",
+                                    final_signal.direction.value, s.get("signal_id"), existing_entry,
+                                    drawdown, final_signal.entry_price, P_be, final_signal.take_profit_2,
+                                )
+                                break
+
                         log.warning(
                             "⛔ CHẶN TRÙNG LẶP: Đã có lệnh %s [%s] đang %s trong database. Bỏ qua để tránh rủi ro chồng lệnh (Double Exposure).",
                             final_signal.direction.value, s.get("signal_id"), s.get("status")
@@ -515,16 +589,6 @@ class LiveBotRunner:
 
                     # Gửi tin nhắn Telegram
                     self.notifier.notify_signal(final_signal)
-
-                    # Tự động khớp lệnh ảo 0.01 lot trên Ví Đầu Tư Ảo nếu bật Auto Trading
-                    try:
-                        self.paper_engine.open_position_from_signal(
-                            signal=final_signal,
-                            current_price=current_price,
-                            spread=spread,
-                        )
-                    except Exception as e:
-                        log.debug("Lỗi khớp lệnh Paper Wallet: %s", e)
 
                     return final_signal
 
@@ -655,6 +719,10 @@ class LiveBotRunner:
                     old_sl = d.old_sl or sig.stop_loss
                     sig.stop_loss = d.new_sl
                     self.signal_repo.update_stop_loss(sig.signal_id, d.new_sl)
+                    try:
+                        self.paper_engine.update_position_sl(sig.signal_id, d.new_sl)
+                    except Exception as e:
+                        log.debug("Lỗi đồng bộ Stop Loss sang Paper Wallet: %s", e)
                     log.info(
                         "🛡️ [%s] Cập nhật SL lệnh %s [%s] -> %.2f (%s)",
                         d.action_type.value, sig.direction.value, sig.signal_id, d.new_sl, d.reason,

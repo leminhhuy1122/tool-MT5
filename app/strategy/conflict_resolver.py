@@ -39,6 +39,7 @@ class ConflictType(Enum):
     OPPOSITE_ACTIVE = "OPPOSITE_ACTIVE"    # Xung đột với lệnh ngược chiều đang active
     MULTI_CANDIDATE = "MULTI_CANDIDATE"    # Xung đột cả BUY và SELL cùng xuất hiện trong 1 nến
     MAX_ACTIVE_EXCEEDED = "MAX_ACTIVE"     # Vượt quá giới hạn số lệnh active cho phép
+    DCA_RECOVERY = "DCA_RECOVERY"          # Tín hiệu DCA cứu lệnh về hòa vốn và nhân đôi lợi nhuận
 
 
 class ConflictResolution(Enum):
@@ -57,6 +58,9 @@ class ConflictDecision:
     reason: str
     existing_signal_id: Optional[str] = None
     action_notes: list[str] = field(default_factory=list)
+    is_dca: bool = False
+    parent_signal_id: Optional[str] = None
+    breakeven_price: Optional[float] = None
 
     @property
     def should_emit(self) -> bool:
@@ -71,6 +75,8 @@ class ConflictConfig:
     max_active_per_symbol: int = 1        # Số tín hiệu active tối đa trên 1 mã (mặc định 1)
     allow_reversal_on_choch: bool = True  # Cho phép đảo chiều khi có CHoCH khung lớn xác nhận
     min_score_for_reversal: float = 75.0  # Điểm tối thiểu để setup đảo chiều được xem xét
+    allow_smart_dca: bool = True          # Cho phép Smart DCA cứu lệnh khi giá âm đạt chuẩn
+    min_dca_distance_points: float = 3.5  # Khoảng cách âm tối thiểu giữa lệnh gốc và lệnh DCA (3.5 giá)
 
 
 class ConflictResolver:
@@ -121,7 +127,16 @@ class ConflictResolver:
             log.info("✓ Ưu tiên SELL theo xu hướng lớn H4 BEARISH. Loại bỏ %d candidate BUY.", len(buy_cands))
             return sell_cands, "Loại bỏ BUY do xung đột với H4 Trend Bearish"
 
-        # 3. Nếu H4 là NEUTRAL: Phân xử theo cấp bậc setup (SMC Sweep > OB > FVG > Retest > Divergence)
+        # 2b. Nếu H4 là NEUTRAL: Kiểm tra xu hướng cấu trúc H1 (structure)
+        if structure is not None and structure.trend != TrendDirection.NEUTRAL:
+            if structure.trend == TrendDirection.BULLISH:
+                log.info("✓ H4 NEUTRAL nhưng cấu trúc H1 BULLISH. Ưu tiên BUY. Loại bỏ %d candidate SELL.", len(sell_cands))
+                return buy_cands, "Ưu tiên BUY theo cấu trúc H1 Bullish khi H4 Neutral"
+            elif structure.trend == TrendDirection.BEARISH:
+                log.info("✓ H4 NEUTRAL nhưng cấu trúc H1 BEARISH. Ưu tiên SELL. Loại bỏ %d candidate BUY.", len(buy_cands))
+                return sell_cands, "Ưu tiên SELL theo cấu trúc H1 Bearish khi H4 Neutral"
+
+        # 3. Nếu cả H4 và H1 đều NEUTRAL: Phân xử theo cấp bậc setup (SMC Sweep > OB > FVG > Retest > Divergence)
         setup_priority = {
             SetupType.SMC_LIQUIDITY_SWEEP: 100,
             SetupType.SMC_ORDER_BLOCK: 80,
@@ -139,15 +154,26 @@ class ConflictResolver:
         buy_prio = setup_priority.get(best_buy.setup_type, 0)
         sell_prio = setup_priority.get(best_sell.setup_type, 0)
 
-        # Nếu một bên có ưu thế cấp bậc vượt trội (>= 30 điểm ưu tiên)
-        if buy_prio - sell_prio >= 30:
+        # Nếu một bên có ưu thế cấp bậc (>= 15 điểm ưu tiên, ví dụ: Sweep 100 vs OB 80, OB 80 vs FVG 60)
+        if buy_prio - sell_prio >= 15:
             log.info("✓ Phân xử: Chọn BUY (%s) vượt trội so với SELL (%s)", best_buy.setup_type.value, best_sell.setup_type.value)
             return [best_buy], f"Ưu tiên setup cấp cao {best_buy.setup_type.value}"
-        elif sell_prio - buy_prio >= 30:
+        elif sell_prio - buy_prio >= 15:
             log.info("✓ Phân xử: Chọn SELL (%s) vượt trội so với BUY (%s)", best_sell.setup_type.value, best_buy.setup_type.value)
             return [best_sell], f"Ưu tiên setup cấp cao {best_sell.setup_type.value}"
 
-        # 4. Nếu ngang sức và H4 là NEUTRAL -> Xung đột chưa giải quyết được, an toàn nhất là WAIT
+        # 4. Nếu ngang sức (cùng cấp bậc hoặc chênh < 15 điểm) trong thị trường tích lũy:
+        # Nếu một bên có R:R tốt hơn đáng kể (>= 0.3R)
+        rr_buy = getattr(best_buy, "risk_reward", 0.0)
+        rr_sell = getattr(best_sell, "risk_reward", 0.0)
+        if (rr_buy - rr_sell) >= 0.3:
+            log.info("✓ Phân xử ngang cấp: Chọn BUY (%s) do R:R tốt hơn (%.1f vs %.1f)", best_buy.setup_type.value, rr_buy, rr_sell)
+            return [best_buy], f"Ưu tiên BUY có R:R vượt trội ({rr_buy:.1f})"
+        elif (rr_sell - rr_buy) >= 0.3:
+            log.info("✓ Phân xử ngang cấp: Chọn SELL (%s) do R:R tốt hơn (%.1f vs %.1f)", best_sell.setup_type.value, rr_sell, rr_buy)
+            return [best_sell], f"Ưu tiên SELL có R:R vượt trội ({rr_sell:.1f})"
+
+        # 5. Nếu hoàn toàn tương đương (cùng loại setup, R:R ngang nhau, không có trend H4/H1) -> WAIT an toàn
         msg = f"Xung đột 2 chiều BUY ({best_buy.setup_type.value}) và SELL ({best_sell.setup_type.value}) chưa rõ ràng trong thị trường tích lũy -> WAIT"
         log.warning("⛔ %s", msg)
         return [], msg
@@ -188,8 +214,32 @@ class ConflictResolver:
             if sig_created.tzinfo is None:
                 sig_created = sig_created.replace(tzinfo=timezone.utc)
 
-            # ── TRƯỜNG HỢP A: CÙNG HƯỚNG (DUPLICATE) ──
+            # ── TRƯỜNG HỢP A: CÙNG HƯỚNG ──
             if sig.direction == cand_dir:
+                # Kiểm tra điều kiện Smart DCA Cứu Lệnh (Averaging Down to Breakeven & Double Profit)
+                if getattr(self.config, "allow_smart_dca", True):
+                    drawdown = (sig.entry_price - new_candidate.entry_price) if cand_dir == SignalDirection.BUY else (new_candidate.entry_price - sig.entry_price)
+                    min_dist = getattr(self.config, "min_dca_distance_points", 3.5)
+                    already_has_dca = any(
+                        (getattr(s, "parent_signal_id", None) == sig.signal_id or getattr(s, "is_dca", False))
+                        for s in active_signals
+                    )
+                    if drawdown >= min_dist and not already_has_dca:
+                        P_be = round((sig.entry_price + new_candidate.entry_price) / 2.0, 2)
+                        log.info(
+                            "🎯 KÍCH HOẠT SMART DCA: Lệnh gốc %s [%s] @ %.2f (âm %.1f giá) -> Cho phép DCA mới @ %.2f (Hòa vốn giỏ: %.2f)",
+                            sig.direction.value, sig.signal_id, sig.entry_price, drawdown, new_candidate.entry_price, P_be,
+                        )
+                        return ConflictDecision(
+                            resolution=ConflictResolution.PROCEED,
+                            conflict_type=ConflictType.DCA_RECOVERY,
+                            reason=f"Smart DCA cứu lệnh #{sig.signal_id} @ {sig.entry_price:.2f} (âm {drawdown:.1f} giá). Hòa vốn giỏ: {P_be:.2f}",
+                            existing_signal_id=sig.signal_id,
+                            is_dca=True,
+                            parent_signal_id=sig.signal_id,
+                            breakeven_price=P_be,
+                        )
+
                 return ConflictDecision(
                     resolution=ConflictResolution.CANCEL_NEW,
                     conflict_type=ConflictType.DUPLICATE_ACTIVE,

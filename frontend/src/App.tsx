@@ -260,6 +260,7 @@ export const App: React.FC = () => {
               <PaperWalletHeroCard
                 paperWallet={statusCards.paperWallet}
                 currentPrice={statusCards.currentPrice || marketOverview.price}
+                signals={signals}
                 onNavigateToWallet={setCurrentMenu}
                 onRefresh={() => loadData(false)}
               />
