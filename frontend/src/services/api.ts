@@ -17,6 +17,8 @@ import type {
   SystemDiagnosticsData,
   SystemLogsResponse,
   SelfTestResponse,
+  MT5TradingStatusData,
+  MT5PositionItem,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -256,6 +258,37 @@ export const api = {
 
   async getPaperEquityCurve(limit: number = 100): Promise<PaperEquitySnapshot[]> {
     return fetchJson<PaperEquitySnapshot[]>(`${API_BASE}/paper-wallet/equity-curve?limit=${limit}`);
+  },
+
+  // ==========================================
+  // MT5 LIVE AUTO-TRADING APIS (STAGE 1, 2, 3)
+  // ==========================================
+  async getMT5TradingStatus(): Promise<MT5TradingStatusData> {
+    return fetchJson<MT5TradingStatusData>(`${API_BASE}/mt5-trading/status`);
+  },
+
+  async toggleMT5AutoTrading(enabled?: boolean): Promise<{ ok: boolean; enabled: boolean; trade_allowed: boolean; trade_allowed_message: string; message: string }> {
+    return postJson<{ ok: boolean; enabled: boolean; trade_allowed: boolean; trade_allowed_message: string; message: string }>(`${API_BASE}/mt5-trading/toggle`, { enabled });
+  },
+
+  async setMT5LotSize(lot_size: number): Promise<{ ok: boolean; lot_size: number; message: string }> {
+    return postJson<{ ok: boolean; lot_size: number; message: string }>(`${API_BASE}/mt5-trading/lot-size`, { lot_size });
+  },
+
+  async getMT5OpenPositions(): Promise<MT5PositionItem[]> {
+    return fetchJson<MT5PositionItem[]>(`${API_BASE}/mt5-trading/positions`);
+  },
+
+  async closeMT5Position(ticket: number, volume?: number, comment?: string): Promise<{ ok: boolean; ticket: number; message: string }> {
+    return postJson<{ ok: boolean; ticket: number; message: string }>(`${API_BASE}/mt5-trading/close-position`, { ticket, volume, comment });
+  },
+
+  async closeAllMT5Positions(): Promise<{ ok: boolean; closed_count: number; total_attempted: number; message: string }> {
+    return postJson<{ ok: boolean; closed_count: number; total_attempted: number; message: string }>(`${API_BASE}/mt5-trading/close-all`, {});
+  },
+
+  async syncActiveSignalsToMT5(): Promise<{ ok: boolean; message: string; tickets: Record<string, number> }> {
+    return postJson<{ ok: boolean; message: string; tickets: Record<string, number> }>(`${API_BASE}/mt5-trading/sync-active-signals`, {});
   },
 };
 

@@ -57,6 +57,11 @@ export interface SignalItem {
   durationSeconds?: number | null;
   breakevenTriggered?: boolean;
   partialClosed?: boolean;
+  mt5Ticket?: number;
+  mt5OpenPrice?: number;
+  mt5PnlUsd?: number;
+  mt5PnlPoints?: number;
+  mt5Volume?: number;
 }
 
 export interface MarketOverviewData {
@@ -386,4 +391,48 @@ export interface NavItem {
   icon?: string;
 }
 
+export interface MT5AccountSummary {
+  connected: boolean;
+  login: number;
+  server: string;
+  name: string;
+  balance: number;
+  equity: number;
+  margin: number;
+  free_margin: number;
+  currency: string;
+  leverage: number;
+  trade_allowed: boolean;
+}
 
+export interface MT5PositionItem {
+  ticket: number;
+  symbol: string;
+  direction: 'BUY' | 'SELL';
+  volume: number;
+  open_price: number;
+  current_price: number;
+  sl: number;
+  tp: number;
+  pnl_usd: number;
+  pnl_points: number;
+  magic: number;
+  comment: string;
+  open_time: string;
+}
+
+export interface MT5TradingStatusData {
+  enabled: boolean;
+  trade_allowed: boolean;
+  trade_allowed_message: string;
+  symbol: string;
+  lot_size: number;
+  max_open_positions: number;
+  magic_number: number;
+  fast_tick_interval_ms: number;
+  account: MT5AccountSummary;
+  open_positions: MT5PositionItem[];
+  open_positions_count: number;
+  pending_orders: any[];
+  active_signal_tickets: Record<string, number>;
+}

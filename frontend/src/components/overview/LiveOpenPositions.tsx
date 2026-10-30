@@ -12,7 +12,8 @@ import {
   Target,
   Zap,
 } from 'lucide-react';
-import type { SignalItem } from '../../types';
+import type { SignalItem, MT5TradingStatusData } from '../../types';
+import { api } from '../../services/api';
 
 interface LatestOutcome {
   hasData: boolean;
@@ -43,6 +44,7 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
   onSelectSignal,
 }) => {
   const [latestOutcome, setLatestOutcome] = useState<LatestOutcome | null>(null);
+  const [mt5Status, setMt5Status] = useState<MT5TradingStatusData | null>(null);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [broadcastResult, setBroadcastResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
@@ -67,6 +69,22 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
   const remainingM = Math.floor(remainingM5Sec / 60);
   const remainingS = remainingM5Sec % 60;
   const m5Pct = Math.min(100, Math.round((m5Elapsed / 300) * 100));
+
+  // Tải trạng thái MT5 Auto-Trading trực tiếp từ backend mỗi 2.5 giây
+  const fetchMt5Status = async () => {
+    try {
+      const data = await api.getMT5TradingStatus();
+      setMt5Status(data);
+    } catch {
+      // Bỏ qua lỗi ngầm
+    }
+  };
+
+  useEffect(() => {
+    fetchMt5Status();
+    const interval = setInterval(fetchMt5Status, 2500);
+    return () => clearInterval(interval);
+  }, []);
 
   // Tải thông tin lệnh vừa đóng gần nhất
   const fetchLatestOutcome = async () => {
@@ -109,14 +127,24 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
     }
   };
 
-  // Lọc các tín hiệu đang mở (ENTRY_REACHED: Đang khớp lệnh thả nổi PnL; ACTIVE: Đang chờ khớp entry)
+  // Lọc các tín hiệu đang mở (ENTRY_REACHED hoặc có lệnh MT5 thật đang giữ vị thế)
+  const isSignalMatched = (s: SignalItem) => {
+    if (s.status === 'ENTRY_REACHED') return true;
+    if (s.mt5Ticket) return true;
+    if (mt5Status?.active_signal_tickets?.[s.id]) return true;
+    const hasComment = mt5Status?.open_positions?.some(
+      (p) => p.comment && p.comment.includes(s.id.slice(0, 6))
+    );
+    return Boolean(hasComment);
+  };
+
   const openPositions = signals.filter(
-    (s) => s.status === 'ENTRY_REACHED' || s.status === 'ACTIVE'
+    (s) => s.status === 'ENTRY_REACHED' || s.status === 'ACTIVE' || isSignalMatched(s)
   );
 
   // Phân loại
-  const matchedPositions = openPositions.filter((s) => s.status === 'ENTRY_REACHED');
-  const pendingPositions = openPositions.filter((s) => s.status === 'ACTIVE');
+  const matchedPositions = openPositions.filter(isSignalMatched);
+  const pendingPositions = openPositions.filter((s) => !isSignalMatched(s) && s.status === 'ACTIVE');
 
   return (
     <div
@@ -578,13 +606,35 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
             {/* 1. Lệnh ĐÃ KHỚP (ENTRY_REACHED) */}
             {matchedPositions.map((pos) => {
               const isSell = pos.direction === 'SELL';
-              const entryPrice = pos.plannedEntry || (pos.entryZone[0] + pos.entryZone[1]) / 2;
+              // Tìm vị thế MT5 tương ứng từ MT5TradingStatusData
+              const mt5Positions = mt5Status?.open_positions || [];
+              const ticketFromMap = mt5Status?.active_signal_tickets?.[pos.id];
+              const matchedMt5Pos = mt5Positions.find(
+                (p) =>
+                  p.ticket === pos.mt5Ticket ||
+                  p.ticket === ticketFromMap ||
+                  (p.comment && p.comment.includes(pos.id.slice(0, 6)))
+              );
+
+              const hasMt5 = Boolean(matchedMt5Pos || pos.mt5Ticket);
+              const mt5Ticket = matchedMt5Pos ? matchedMt5Pos.ticket : pos.mt5Ticket;
+              const mt5OpenPrice = matchedMt5Pos ? matchedMt5Pos.open_price : pos.mt5OpenPrice;
+              const mt5PnlUsd = matchedMt5Pos ? matchedMt5Pos.pnl_usd : pos.mt5PnlUsd;
+              const mt5PnlPoints = matchedMt5Pos ? matchedMt5Pos.pnl_points : pos.mt5PnlPoints;
+              const mt5Volume = matchedMt5Pos ? matchedMt5Pos.volume : pos.mt5Volume;
+
+              const entryPrice = hasMt5 && mt5OpenPrice ? mt5OpenPrice : (pos.plannedEntry || (pos.entryZone[0] + pos.entryZone[1]) / 2);
               const livePrice = currentPrice > 0 ? currentPrice : entryPrice;
 
               // Tính toán chênh lệch (Points và Pips cho XAUUSD: 1 giá = 10 pips)
-              const pnlPoints = isSell ? entryPrice - livePrice : livePrice - entryPrice;
+              const pnlPoints = hasMt5 && mt5PnlPoints !== undefined
+                ? mt5PnlPoints
+                : (isSell ? entryPrice - livePrice : livePrice - entryPrice);
               const pnlPips = pnlPoints * 10;
-              const isProfit = pnlPoints >= 0;
+              const isProfit = hasMt5 && mt5PnlUsd !== undefined
+                ? mt5PnlUsd >= 0
+                : pnlPoints >= 0;
+              const realPnlUsd = hasMt5 && mt5PnlUsd !== undefined ? mt5PnlUsd : pnlPoints * 1.0;
 
               // Khoảng cách tới TP1 và SL
               const tp1DistancePoints = Math.abs(pos.takeProfit1 - entryPrice); // mục tiêu (thường 10 giá)
@@ -656,22 +706,42 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                         #{pos.id} • {pos.timeframe}
                       </span>
 
-                      <span
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          color: '#10B981',
-                          backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                          padding: '3px 8px',
-                          borderRadius: '4px',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                        }}
-                      >
-                        <Flame size={12} />
-                        ĐÃ KHỚP LỆNH (IN-TRADE)
-                      </span>
+                      {hasMt5 ? (
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            color: '#38BDF8',
+                            backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                            padding: '3px 8px',
+                            borderRadius: '4px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            border: '1px solid rgba(56, 189, 248, 0.4)',
+                          }}
+                        >
+                          <Zap size={12} />
+                          ĐÃ KHỚP SÀN MT5 #{mt5Ticket}
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            color: '#10B981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            padding: '3px 8px',
+                            borderRadius: '4px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
+                        >
+                          <Flame size={12} />
+                          ĐÃ KHỚP LỆNH (IN-TRADE)
+                        </span>
+                      )}
                     </div>
 
                     {/* Điểm Confluence Score */}
@@ -752,32 +822,63 @@ export const LiveOpenPositions: React.FC<LiveOpenPositionsProps> = ({
                         </span>
                       </div>
                       <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span
-                          style={{
-                            fontSize: '12px',
-                            fontWeight: 800,
-                            padding: '3px 9px',
-                            borderRadius: '6px',
-                            backgroundColor: isProfit ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-                            color: isProfit ? '#10B981' : '#F87171',
-                            border: `1px solid ${isProfit ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
-                            fontFamily: 'monospace',
-                          }}
-                        >
-                          💼 Ví Ảo (0.01 lot): {isProfit ? `Đang lời +$${(pnlPoints * 1.0).toFixed(2)} USD (+${(pnlPoints * 1.0).toFixed(2)} U)` : `Đang âm -$${Math.abs(pnlPoints * 1.0).toFixed(2)} USD (-${Math.abs(pnlPoints * 1.0).toFixed(2)} U)`}
-                        </span>
-                        <span style={{ fontSize: '11px', color: '#94A3B8' }}>
-                          (Chuẩn hợp đồng XAUUSD: 1 giá = 1.00 U)
-                        </span>
+                        {hasMt5 ? (
+                          <>
+                            <span
+                              style={{
+                                fontSize: '12px',
+                                fontWeight: 800,
+                                padding: '3px 9px',
+                                borderRadius: '6px',
+                                backgroundColor: isProfit ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                                color: isProfit ? '#10B981' : '#F87171',
+                                border: `1px solid ${isProfit ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
+                                fontFamily: 'monospace',
+                              }}
+                            >
+                              ⚡ Lệnh Thật MT5 #{mt5Ticket} ({mt5Volume || 0.01}L): {isProfit ? `+$${realPnlUsd.toFixed(2)} USD` : `-$${Math.abs(realPnlUsd).toFixed(2)} USD`}
+                            </span>
+                            <span style={{ fontSize: '11px', color: '#94A3B8' }}>
+                              (Đồng bộ trực tiếp từ MT5 Terminal)
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span
+                              style={{
+                                fontSize: '12px',
+                                fontWeight: 800,
+                                padding: '3px 9px',
+                                borderRadius: '6px',
+                                backgroundColor: isProfit ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                                color: isProfit ? '#10B981' : '#F87171',
+                                border: `1px solid ${isProfit ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
+                                fontFamily: 'monospace',
+                              }}
+                            >
+                              💼 Ví Ảo (0.01 lot): {isProfit ? `Đang lời +$${(pnlPoints * 1.0).toFixed(2)} USD (+${(pnlPoints * 1.0).toFixed(2)} U)` : `Đang âm -$${Math.abs(pnlPoints * 1.0).toFixed(2)} USD (-${Math.abs(pnlPoints * 1.0).toFixed(2)} U)`}
+                            </span>
+                            <span style={{ fontSize: '11px', color: '#94A3B8' }}>
+                              (Chuẩn hợp đồng XAUUSD: 1 giá = 1.00 U)
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', textAlign: 'right' }}>
                       <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.25)', padding: '6px 10px', borderRadius: '6px' }}>
-                        <div style={{ fontSize: '10px', color: '#94A3B8' }}>Giá Khớp Entry</div>
-                        <div style={{ fontSize: '13px', fontWeight: 800, fontFamily: 'monospace', color: '#F8FAFC' }}>
+                        <div style={{ fontSize: '10px', color: hasMt5 ? '#38BDF8' : '#94A3B8' }}>
+                          {hasMt5 ? `Khớp Thật MT5 #${mt5Ticket}` : 'Giá Khớp Entry'}
+                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 800, fontFamily: 'monospace', color: hasMt5 ? '#38BDF8' : '#F8FAFC' }}>
                           ${entryPrice.toFixed(2)}
                         </div>
+                        {hasMt5 && pos.plannedEntry && Math.abs(entryPrice - pos.plannedEntry) > 0.05 && (
+                          <div style={{ fontSize: '9px', color: '#64748B' }}>
+                            Kế hoạch: ${pos.plannedEntry.toFixed(2)}
+                          </div>
+                        )}
                       </div>
                       <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.25)', padding: '6px 10px', borderRadius: '6px' }}>
                         <div style={{ fontSize: '10px', color: '#94A3B8' }}>Giá Thị Trường</div>

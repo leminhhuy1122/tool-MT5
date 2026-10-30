@@ -37,6 +37,7 @@ from app.market.market_structure import analyze_market_structure
 from app.market.timeframe_manager import Timeframe
 from app.market.volatility import analyze_volatility
 from app.mt5.connector import MT5Connector
+from app.mt5.executor import MT5Executor
 from app.news.ai_writer import AINewsWriter
 from app.news.calendar import NewsManager
 from app.strategy.signal_engine import SignalEngine
@@ -141,9 +142,9 @@ def verify_admin_key(
 
 
 def bot_runner_worker():
-    """Vòng lặp chạy ngầm tự động phân tích và bám sát giá của bot."""
+    """Vòng lặp chạy ngầm tự động phân tích và bám sát giá của bot với tốc độ cao (High-Speed Fast-Tick Loop)."""
     global bot_runner, runner_stop_event
-    log.info("Khởi chạy LiveBotRunner background worker...")
+    log.info("Khởi chạy LiveBotRunner background worker (Chế độ Fast-Tick 250ms)...")
     time.sleep(2.0)
     while not runner_stop_event.is_set():
         try:
@@ -151,7 +152,11 @@ def bot_runner_worker():
                 bot_runner.run_once()
         except Exception as e:
             log.debug("Lỗi trong chu kỳ bot runner worker: %s", e)
-        runner_stop_event.wait(5.0)
+
+        interval_sec = 0.25
+        if bot_runner and hasattr(bot_runner, "mt5_trading_config"):
+            interval_sec = max(0.1, float(getattr(bot_runner.mt5_trading_config, "fast_tick_interval_ms", 250)) / 1000.0)
+        runner_stop_event.wait(interval_sec)
 
 
 @asynccontextmanager
@@ -498,6 +503,18 @@ def get_signals(limit: int = 20):
 
     if signal_repo:
         try:
+            mt5_tickets = {}
+            mt5_positions_map = {}
+            if bot_runner:
+                mt5_tickets = dict(getattr(bot_runner, "_signal_mt5_tickets", {}))
+                if hasattr(bot_runner, "mt5_executor"):
+                    try:
+                        raw_pos = bot_runner.mt5_executor.get_open_positions()
+                        for p in raw_pos:
+                            mt5_positions_map[p.ticket] = p
+                    except Exception:
+                        pass
+
             rows = signal_repo.get_recent_signals(limit=limit, symbol=symbol)
             for r in rows:
                 reasons = r.get("reasons")
@@ -540,8 +557,12 @@ def get_signals(limit: int = 20):
                 setup_type = r.get("setup_type") or ""
                 is_predictive = (setup_type == "PREDICTIVE_LIMIT")
 
+                sig_id = r.get("signal_id")
+                mt5_ticket = mt5_tickets.get(sig_id)
+                mt5_pos = mt5_positions_map.get(mt5_ticket) if mt5_ticket else None
+
                 signals.append({
-                    "id": r.get("signal_id"),
+                    "id": sig_id,
                     "symbol": r.get("symbol", symbol),
                     "direction": r.get("direction", "WAIT"),
                     "timeframe": r.get("timeframe", "M5"),
@@ -569,6 +590,11 @@ def get_signals(limit: int = 20):
                     "isBreakeven": is_be,
                     "exitPrice": round(float(r.get("exit_price")), 2) if r.get("exit_price") is not None else None,
                     "durationSeconds": r.get("duration_seconds"),
+                    "mt5Ticket": mt5_ticket,
+                    "mt5OpenPrice": round(mt5_pos.open_price, 2) if mt5_pos else None,
+                    "mt5PnlUsd": round(mt5_pos.pnl_usd, 2) if mt5_pos else None,
+                    "mt5PnlPoints": round(mt5_pos.pnl_points, 2) if mt5_pos else None,
+                    "mt5Volume": mt5_pos.volume if mt5_pos else None,
                 })
         except Exception as e:
             log.warning("Lỗi truy vấn signals: %s", e)
@@ -1895,12 +1921,163 @@ def get_paper_equity_curve(limit: int = 100):
     return engine.get_equity_curve(limit=limit)
 
 
+# ──────────────────────────────────────────────
+# MT5 Live Auto-Trading Endpoints (Giai đoạn 1 & 2)
+# ──────────────────────────────────────────────
+class MT5ToggleTradingRequest(BaseModel):
+    enabled: Optional[bool] = None
 
 
+class MT5LotSizeRequest(BaseModel):
+    lot_size: float
 
 
+class MT5ClosePositionRequest(BaseModel):
+    ticket: int
+    volume: Optional[float] = None
+    comment: Optional[str] = "Thủ công Web API"
 
 
+def _get_mt5_executor() -> MT5Executor:
+    global bot_runner
+    if bot_runner and getattr(bot_runner, "mt5_executor", None):
+        return bot_runner.mt5_executor
+    from app.mt5.executor import MT5Executor
+    from config import MT5TradingConfig
+    return MT5Executor(config=MT5TradingConfig.from_env())
+
+
+@app.get("/api/v1/mt5-trading/status")
+def get_mt5_trading_status():
+    """Lấy trạng thái thực tế của hệ thống MT5 Auto-Trading và tài khoản Broker."""
+    global bot_runner
+    if bot_runner and hasattr(bot_runner, "get_mt5_trading_status"):
+        return bot_runner.get_mt5_trading_status()
+
+    executor = _get_mt5_executor()
+    allowed, msg = executor.is_trade_allowed()
+    account = executor.get_account_summary()
+    positions = [p.to_dict() for p in executor.get_open_positions()]
+    pending = executor.get_pending_orders()
+
+    return {
+        "enabled": False,
+        "trade_allowed": allowed,
+        "trade_allowed_message": msg,
+        "symbol": "XAUUSD",
+        "lot_size": 0.01,
+        "max_open_positions": 2,
+        "magic_number": 888999,
+        "fast_tick_interval_ms": 250,
+        "account": account,
+        "open_positions": positions,
+        "open_positions_count": len(positions),
+        "pending_orders": pending,
+        "active_signal_tickets": {},
+    }
+
+
+@app.post("/api/v1/mt5-trading/toggle")
+def toggle_mt5_auto_trading(req: MT5ToggleTradingRequest):
+    """Bật / Tắt tính năng tự động đặt lệnh thật trên MT5."""
+    global bot_runner
+    if not bot_runner:
+        raise HTTPException(status_code=503, detail="Bot Runner chưa khởi động")
+
+    new_state = bot_runner.toggle_mt5_auto_trading(enabled=req.enabled)
+    allowed, msg = bot_runner.mt5_executor.is_trade_allowed()
+
+    return {
+        "ok": True,
+        "enabled": new_state,
+        "trade_allowed": allowed,
+        "trade_allowed_message": msg,
+        "message": f"MT5 Auto-Trading: {'ĐÃ BẬT' if new_state else 'ĐÃ TẮT'}. {msg if not allowed else ''}",
+    }
+
+
+@app.post("/api/v1/mt5-trading/lot-size")
+def set_mt5_lot_size(req: MT5LotSizeRequest):
+    """Thay đổi khối lượng lot giao dịch cho MT5 Auto-Trading."""
+    global bot_runner
+    if not bot_runner:
+        raise HTTPException(status_code=503, detail="Bot Runner chưa khởi động")
+
+    new_lot = bot_runner.set_mt5_lot_size(req.lot_size)
+    return {
+        "ok": True,
+        "lot_size": new_lot,
+        "message": f"Đã cập nhật khối lượng giao dịch MT5: {new_lot:.2f} lot",
+    }
+
+
+@app.get("/api/v1/mt5-trading/positions")
+def get_mt5_open_positions():
+    """Lấy danh sách các vị thế thực tế đang mở trên MT5."""
+    executor = _get_mt5_executor()
+    positions = [p.to_dict() for p in executor.get_open_positions()]
+    return positions
+
+
+@app.post("/api/v1/mt5-trading/close-position")
+def close_mt5_position(req: MT5ClosePositionRequest):
+    """Đóng thủ công 1 vị thế cụ thể trên MT5."""
+    executor = _get_mt5_executor()
+    res = executor.close_position(ticket=req.ticket, volume=req.volume, comment=req.comment or "Manual Web")
+    if not res.success:
+        raise HTTPException(status_code=400, detail=res.comment)
+    return {
+        "ok": True,
+        "ticket": res.ticket,
+        "message": f"Đã đóng vị thế MT5 #{res.ticket} thành công @ {res.price:.2f}",
+        "result": {
+            "ticket": res.ticket,
+            "price": res.price,
+            "volume": res.volume,
+            "comment": res.comment,
+        },
+    }
+
+
+@app.post("/api/v1/mt5-trading/close-all")
+def close_all_mt5_positions():
+    """Khẩn cấp 1-Click: Đóng toàn bộ các vị thế đang mở trên MT5."""
+    global bot_runner
+    if bot_runner and hasattr(bot_runner, "close_all_mt5_positions"):
+        results = bot_runner.close_all_mt5_positions()
+    else:
+        executor = _get_mt5_executor()
+        results = executor.close_all_positions()
+
+    success_count = sum(1 for r in results if r.success)
+    return {
+        "ok": True,
+        "closed_count": success_count,
+        "total_attempted": len(results),
+        "message": f"Đã tất toán {success_count}/{len(results)} vị thế MT5 khẩn cấp!",
+    }
+
+
+@app.post("/api/v1/mt5-trading/sync-active-signals")
+def sync_active_signals_to_mt5():
+    """Đồng bộ khớp ngay các tín hiệu ENTRY_REACHED đang chạy lên MT5."""
+    global bot_runner
+    if not bot_runner:
+        raise HTTPException(status_code=503, detail="Bot Runner chưa khởi động")
+
+    allowed, msg = bot_runner.mt5_executor.is_trade_allowed()
+    if not allowed:
+        raise HTTPException(status_code=400, detail=msg)
+
+    bot_runner.mt5_trading_config.enabled = True
+    bot_runner.run_once()
+
+    tickets = dict(bot_runner._signal_mt5_tickets)
+    return {
+        "ok": True,
+        "message": f"Đã đồng bộ lệnh lên MT5 thành công! Các ticket MT5: {tickets}",
+        "tickets": tickets,
+    }
 
 
 # Gắn Static files của Frontend Terminal nếu đã build

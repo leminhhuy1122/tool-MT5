@@ -3,7 +3,7 @@
 VietKey Gold AI — Tests for Admin & Telegram API Route Handlers.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
@@ -121,4 +121,84 @@ def test_get_ml_models_and_status_routes():
     assert isinstance(models_res["models"], list)
 
 
+def test_mt5_trading_status_route():
+    """Kiểm tra endpoint /api/v1/mt5-trading/status."""
+    from app.api.server import get_mt5_trading_status
+    res = get_mt5_trading_status()
+    assert "enabled" in res
+    assert "trade_allowed" in res
+    assert "account" in res
+    assert "open_positions" in res
+    assert "fast_tick_interval_ms" in res
+    assert res["fast_tick_interval_ms"] == 250
 
+
+def test_mt5_trading_toggle_route():
+    """Kiểm tra endpoint /api/v1/mt5-trading/toggle."""
+    import app.api.server as srv
+    from app.api.server import toggle_mt5_auto_trading, MT5ToggleTradingRequest
+    mock_runner = MagicMock()
+    mock_runner.toggle_mt5_auto_trading.return_value = True
+    mock_runner.mt5_executor.is_trade_allowed.return_value = (True, "Sẵn sàng giao dịch")
+
+    orig = srv.bot_runner
+    try:
+        srv.bot_runner = mock_runner
+        res = toggle_mt5_auto_trading(MT5ToggleTradingRequest(enabled=True))
+        assert res["ok"] is True
+        assert res["enabled"] is True
+        assert "ĐÃ BẬT" in res["message"]
+    finally:
+        srv.bot_runner = orig
+
+
+def test_mt5_trading_lot_size_route():
+    """Kiểm tra endpoint /api/v1/mt5-trading/lot-size."""
+    import app.api.server as srv
+    from app.api.server import set_mt5_lot_size, MT5LotSizeRequest
+    mock_runner = MagicMock()
+    mock_runner.set_mt5_lot_size.return_value = 0.05
+
+    orig = srv.bot_runner
+    try:
+        srv.bot_runner = mock_runner
+        res = set_mt5_lot_size(MT5LotSizeRequest(lot_size=0.05))
+        assert res["ok"] is True
+        assert res["lot_size"] == 0.05
+    finally:
+        srv.bot_runner = orig
+
+
+def test_mt5_trading_open_positions_route():
+    """Kiểm tra endpoint /api/v1/mt5-trading/positions."""
+    from app.api.server import get_mt5_open_positions
+    with patch("app.api.server._get_mt5_executor") as mock_get_exec:
+        mock_exec = MagicMock()
+        mock_exec.get_open_positions.return_value = []
+        mock_get_exec.return_value = mock_exec
+
+        res = get_mt5_open_positions()
+        assert isinstance(res, list)
+        assert len(res) == 0
+
+
+def test_mt5_trading_close_all_route():
+    """Kiểm tra endpoint /api/v1/mt5-trading/close-all."""
+    import app.api.server as srv
+    from app.api.server import close_all_mt5_positions
+    from app.mt5.executor import OrderResult
+
+    mock_runner = MagicMock()
+    mock_runner.close_all_mt5_positions.return_value = [
+        OrderResult(success=True, ticket=101, comment="Closed"),
+    ]
+
+    orig = srv.bot_runner
+    try:
+        srv.bot_runner = mock_runner
+        res = close_all_mt5_positions()
+        assert res["ok"] is True
+        assert res["closed_count"] == 1
+        assert res["total_attempted"] == 1
+    finally:
+        srv.bot_runner = orig

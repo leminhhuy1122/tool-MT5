@@ -282,6 +282,37 @@ class DCAConfig:
         )
 
 
+@dataclass
+class MT5TradingConfig:
+    """Cấu hình tự động đặt lệnh và quản trị rủi ro trực tiếp trên MT5."""
+
+    enabled: bool = field(default=True)                  # Bật/Tắt tự động giao dịch thật/demo MT5
+    symbol: str = field(default="XAUUSD")                # Cặp tiền giao dịch
+    lot_size: float = field(default=0.01)                # Khối lượng vào lệnh mặc định
+    max_open_positions: int = field(default=2)           # Số vị thế tối đa (1 gốc + 1 DCA)
+    max_slippage_points: int = field(default=20)         # Độ trượt giá tối đa cho phép (2.0 giá)
+    magic_number: int = field(default=888999)            # Magic number định danh lệnh của VietKey Bot
+    order_mode: str = field(default="ENTRY_REACHED")     # "ENTRY_REACHED" (khớp market khi vào entry) hoặc "PENDING_LIMIT"
+    allow_smart_dca: bool = field(default=True)          # Tự động DCA cứu lệnh trực tiếp trên MT5
+    max_daily_loss_usd: float = field(default=100.0)     # Ngưỡng khóa lệnh nếu lỗ vượt mức trong ngày
+    fast_tick_interval_ms: int = field(default=250)      # Tốc độ quét giá và bám sát vị thế (250ms = 4 lần/giây)
+
+    @classmethod
+    def from_env(cls) -> "MT5TradingConfig":
+        return cls(
+            enabled=_get_env("MT5_AUTO_TRADING_ENABLED", default="true").lower() in ("true", "1", "yes"),
+            symbol=_get_env("MT5_TRADING_SYMBOL", default="XAUUSD"),
+            lot_size=float(_get_env("MT5_LOT_SIZE", default="0.01")),
+            max_open_positions=int(_get_env("MT5_MAX_POSITIONS", default="2")),
+            max_slippage_points=int(_get_env("MT5_MAX_SLIPPAGE", default="20")),
+            magic_number=int(_get_env("MT5_MAGIC_NUMBER", default="888999")),
+            order_mode=_get_env("MT5_ORDER_MODE", default="ENTRY_REACHED"),
+            allow_smart_dca=_get_env("MT5_ALLOW_DCA", default="true").lower() in ("true", "1", "yes"),
+            max_daily_loss_usd=float(_get_env("MT5_MAX_DAILY_LOSS", default="100.0")),
+            fast_tick_interval_ms=int(_get_env("MT5_FAST_TICK_INTERVAL_MS", default="250")),
+        )
+
+
 # ──────────────────────────────────────────────
 # Factory function: tạo tất cả config một lần
 # ──────────────────────────────────────────────
@@ -299,6 +330,7 @@ class Settings:
     smart_exit: SmartExitConfig = field(default_factory=SmartExitConfig.from_env)
     hedging: HedgingConfig = field(default_factory=HedgingConfig.from_env)
     dca: DCAConfig = field(default_factory=DCAConfig.from_env)
+    mt5_trading: MT5TradingConfig = field(default_factory=MT5TradingConfig.from_env)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -314,6 +346,7 @@ class Settings:
             smart_exit=SmartExitConfig.from_env(),
             hedging=HedgingConfig.from_env(),
             dca=DCAConfig.from_env(),
+            mt5_trading=MT5TradingConfig.from_env(),
         )
 
 

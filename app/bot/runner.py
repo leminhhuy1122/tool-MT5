@@ -23,7 +23,7 @@ import re
 import signal
 import sys
 import time
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -36,6 +36,7 @@ from app.ml.filter import MLSignalFilter
 from app.ml.model import SignalQualityClassifier
 from app.ml.registry import ModelRegistry
 from app.mt5.connector import MT5Connector
+from app.mt5.executor import MT5Executor, OrderResult, PositionInfo
 from app.news.ai_writer import AINewsWriter
 from app.news.calendar import NewsManager
 from app.strategy.feedback_learner import SelfLearningFeedbackEngine, TradeOutcomeAnalyzer
@@ -45,7 +46,7 @@ from app.strategy.signal_tracker import SignalTracker, TrackerConfig
 from app.strategy.smart_exit import ExitActionType, SmartExitConfig, SmartExitEngine
 from app.simulator.paper_engine import PaperTradingEngine
 from app.telegram.notifier import TelegramNotifier
-from config import Settings, get_settings
+from config import MT5TradingConfig, Settings, get_settings
 from logger import get_logger
 
 log = get_logger("bot.runner")
@@ -152,6 +153,11 @@ class LiveBotRunner:
             notifier=self.notifier,
             smart_exit_engine=self.smart_exit,
         )
+
+        # 8. MT5 Live Order Executor (Auto-Trading trực tiếp trên sàn MT5)
+        self.mt5_trading_config = getattr(self.settings, "mt5_trading", None) or MT5TradingConfig.from_env()
+        self.mt5_executor = MT5Executor(config=self.mt5_trading_config)
+        self._signal_mt5_tickets: dict[str, int] = {}
 
         # Trạng thái vòng lặp và tự phục hồi
         self.last_processed_m5_time: Optional[datetime] = None
@@ -261,7 +267,7 @@ class LiveBotRunner:
                     sig.status,
                     invalidation=getattr(sig, "invalidation", None),
                 )
-                # 1. KHI TÍN HIỆU CHÍNH THỨC KHỚP VÙNG ENTRY -> KHỚP LỆNH VÍ ẢO 1:1
+                # 1. KHI TÍN HIỆU CHÍNH THỨC KHỚP VÙNG ENTRY -> KHỚP LỆNH VÍ ẢO 1:1 & MT5 LIVE
                 if sig.status == SignalStatus.ENTRY_REACHED:
                     try:
                         spread = float(price_info.get("spread", 0.3)) if price_info else 0.3
@@ -272,6 +278,33 @@ class LiveBotRunner:
                         )
                     except Exception as e:
                         log.debug("Lỗi khớp lệnh Paper Wallet khi ENTRY_REACHED: %s", e)
+
+                    # Bắn lệnh thực thi trực tiếp trên MT5 nếu bật MT5 Auto-Trading
+                    if getattr(self.mt5_trading_config, "enabled", False):
+                        try:
+                            if sig.signal_id not in self._signal_mt5_tickets:
+                                order_res = self.mt5_executor.send_market_order(
+                                    symbol=sig.symbol,
+                                    direction=sig.direction,
+                                    volume=self.mt5_trading_config.lot_size,
+                                    sl=sig.stop_loss,
+                                    tp=sig.take_profit_1,
+                                    comment=f"VK_{sig.signal_id[:6]}",
+                                    magic=self.mt5_trading_config.magic_number,
+                                )
+                                if order_res.success:
+                                    self._signal_mt5_tickets[sig.signal_id] = order_res.ticket
+                                    if self.notifier and self.notifier.is_enabled:
+                                        self.notifier.send_raw_message(
+                                            f"🚀 <b>MT5 AUTO-TRADING: ĐÃ VÀO LỆNH THÀNH CÔNG!</b>\n\n"
+                                            f"📌 <b>Lệnh:</b> {sig.direction.value} {sig.symbol} <code>#{order_res.ticket}</code>\n"
+                                            f"📊 <b>Khối lượng:</b> <code>{order_res.volume} lot</code> @ <code>{order_res.price:.2f}</code>\n"
+                                            f"🛑 <b>Stop Loss:</b> <code>{order_res.sl:.2f}</code> (Ghim server 0ms)\n"
+                                            f"🎯 <b>Take Profit:</b> <code>{order_res.tp:.2f}</code>\n"
+                                            f"⚡ <i>Khớp tự động bởi VietKey MT5 Live Executor</i>"
+                                        )
+                        except Exception as e:
+                            log.error("Lỗi đặt lệnh MT5 Live: %s", e)
 
                 # 2. KHI TÍN HIỆU ĐẠT TP HOẶC SL -> ĐÓNG VỊ THẾ VÀ TÍNH PNL THẬT
                 elif sig.status in (SignalStatus.TP_REACHED, SignalStatus.SL_REACHED):
@@ -316,6 +349,15 @@ class LiveBotRunner:
                     except Exception as e:
                         log.debug("Lỗi đóng lệnh Paper Wallet theo signal: %s", e)
 
+                    # Đóng vị thế MT5 nếu broker chưa tự cắt
+                    if getattr(self.mt5_trading_config, "enabled", False) and sig.signal_id in self._signal_mt5_tickets:
+                        ticket = self._signal_mt5_tickets.pop(sig.signal_id, None)
+                        if ticket:
+                            try:
+                                self.mt5_executor.close_position(ticket=ticket, comment=sig.status.value)
+                            except Exception as e:
+                                log.debug("Lỗi đóng vị thế MT5 theo signal: %s", e)
+
                     # Xóa trạng thái trong AI Copilot
                     try:
                         self.ai_copilot.clear_signal(sig.signal_id)
@@ -332,6 +374,15 @@ class LiveBotRunner:
                         )
                     except Exception as e:
                         log.debug("Lỗi đóng/hủy lệnh Paper Wallet khi tín hiệu bị hủy: %s", e)
+
+                    # Đóng hoặc hủy lệnh MT5 nếu bị hủy
+                    if getattr(self.mt5_trading_config, "enabled", False) and sig.signal_id in self._signal_mt5_tickets:
+                        ticket = self._signal_mt5_tickets.pop(sig.signal_id, None)
+                        if ticket:
+                            try:
+                                self.mt5_executor.close_position(ticket=ticket, comment=sig.status.value)
+                            except Exception as e:
+                                log.debug("Lỗi đóng vị thế MT5 khi tín hiệu bị hủy: %s", e)
 
                     # Tự động cập nhật ma trận thích ứng Self-Learning
                     try:
@@ -387,6 +438,38 @@ class LiveBotRunner:
                 self.check_ai_copilot_companion(current_price=current_price, now_utc=now_utc)
             except Exception as e:
                 log.debug("Lỗi AI Copilot Companion: %s", e)
+
+            # 2e. Tự động đồng bộ và khớp lệnh MT5 cho các tín hiệu ENTRY_REACHED chưa có lệnh MT5
+            if getattr(self.mt5_trading_config, "enabled", False):
+                try:
+                    for sig in self.tracker.active_signals:
+                        if sig.status == SignalStatus.ENTRY_REACHED and sig.signal_id not in self._signal_mt5_tickets:
+                            is_buy = sig.direction == SignalDirection.BUY
+                            price_ok = (current_price > sig.stop_loss) if is_buy else (current_price < sig.stop_loss)
+                            if price_ok:
+                                order_res = self.mt5_executor.send_market_order(
+                                    symbol=sig.symbol,
+                                    direction=sig.direction,
+                                    volume=self.mt5_trading_config.lot_size,
+                                    sl=sig.stop_loss,
+                                    tp=sig.take_profit_1,
+                                    comment=f"VK_{sig.signal_id[:6]}",
+                                    magic=self.mt5_trading_config.magic_number,
+                                )
+                                if order_res.success:
+                                    self._signal_mt5_tickets[sig.signal_id] = order_res.ticket
+                                    log.info("🚀 [MT5 AUTO] Đã đồng bộ vào lệnh cho tín hiệu %s: Ticket #%d", sig.signal_id, order_res.ticket)
+                                    if self.notifier and self.notifier.is_enabled:
+                                        self.notifier.send_raw_message(
+                                            f"🚀 <b>MT5 AUTO-TRADING: ĐÃ VÀO LỆNH THÀNH CÔNG!</b>\n\n"
+                                            f"📌 <b>Lệnh:</b> {sig.direction.value} {sig.symbol} <code>#{order_res.ticket}</code>\n"
+                                            f"📊 <b>Khối lượng:</b> <code>{order_res.volume} lot</code> @ <code>{order_res.price:.2f}</code>\n"
+                                            f"🛑 <b>Stop Loss:</b> <code>{order_res.sl:.2f}</code> (Ghim server 0ms)\n"
+                                            f"🎯 <b>Take Profit:</b> <code>{order_res.tp:.2f}</code>\n"
+                                            f"⚡ <i>Khớp tự động bởi VietKey MT5 Live Executor</i>"
+                                        )
+                except Exception as e:
+                    log.debug("Lỗi đồng bộ vào lệnh MT5: %s", e)
 
             # 3. Thu thập nến M5 và kiểm tra nến mới (Lightweight check 2 bars trước khi tải 100 nến)
             has_new_candle, _ = self.data_mgr.check_new_candle(Timeframe.M5, self.last_processed_m5_time)
@@ -723,6 +806,16 @@ class LiveBotRunner:
                         self.paper_engine.update_position_sl(sig.signal_id, d.new_sl)
                     except Exception as e:
                         log.debug("Lỗi đồng bộ Stop Loss sang Paper Wallet: %s", e)
+
+                    # Đồng bộ dời Stop Loss trực tiếp trên sàn MT5 Server-side qua TRADE_ACTION_SLTP
+                    if getattr(self.mt5_trading_config, "enabled", False) and sig.signal_id in self._signal_mt5_tickets:
+                        ticket = self._signal_mt5_tickets.get(sig.signal_id)
+                        if ticket:
+                            try:
+                                self.mt5_executor.modify_position_sltp(ticket=ticket, sl=d.new_sl)
+                            except Exception as e:
+                                log.debug("Lỗi dời Stop Loss trên MT5: %s", e)
+
                     log.info(
                         "🛡️ [%s] Cập nhật SL lệnh %s [%s] -> %.2f (%s)",
                         d.action_type.value, sig.direction.value, sig.signal_id, d.new_sl, d.reason,
@@ -865,3 +958,49 @@ class LiveBotRunner:
             log.info("Người dùng ngắt tiến trình (KeyboardInterrupt).")
         finally:
             self.stop()
+
+    def toggle_mt5_auto_trading(self, enabled: Optional[bool] = None) -> bool:
+        """Bật/Tắt tính năng tự động đặt lệnh thật trên MT5."""
+        if enabled is None:
+            self.mt5_trading_config.enabled = not self.mt5_trading_config.enabled
+        else:
+            self.mt5_trading_config.enabled = bool(enabled)
+        state_str = "BẬT" if self.mt5_trading_config.enabled else "TẮT"
+        log.info("⚙️ MT5 Auto-Trading đã chuyển sang trạng thái: %s", state_str)
+        return self.mt5_trading_config.enabled
+
+    def set_mt5_lot_size(self, lot_size: float) -> float:
+        """Thiết lập khối lượng lot giao dịch cho MT5 Auto-Trading."""
+        vol = max(0.01, min(round(float(lot_size), 2), 10.0))
+        self.mt5_trading_config.lot_size = vol
+        log.info("⚙️ MT5 Auto-Trading đã cập nhật Lot Size: %.2f", vol)
+        return vol
+
+    def close_all_mt5_positions(self) -> list[Any]:
+        """Khẩn cấp 1-Click: Đóng toàn bộ các vị thế đang mở trên MT5."""
+        res = self.mt5_executor.close_all_positions(self.mt5_trading_config.symbol)
+        self._signal_mt5_tickets.clear()
+        return res
+
+    def get_mt5_trading_status(self) -> dict[str, Any]:
+        """Lấy toàn bộ trạng thái MT5 Auto-Trading và các vị thế thực tế."""
+        allowed, msg = self.mt5_executor.is_trade_allowed()
+        account = self.mt5_executor.get_account_summary()
+        positions = [p.to_dict() for p in self.mt5_executor.get_open_positions(self.mt5_trading_config.symbol)]
+        pending = self.mt5_executor.get_pending_orders(self.mt5_trading_config.symbol)
+
+        return {
+            "enabled": self.mt5_trading_config.enabled,
+            "trade_allowed": allowed,
+            "trade_allowed_message": msg,
+            "symbol": self.mt5_trading_config.symbol,
+            "lot_size": self.mt5_trading_config.lot_size,
+            "max_open_positions": self.mt5_trading_config.max_open_positions,
+            "magic_number": self.mt5_trading_config.magic_number,
+            "fast_tick_interval_ms": self.mt5_trading_config.fast_tick_interval_ms,
+            "account": account,
+            "open_positions": positions,
+            "open_positions_count": len(positions),
+            "pending_orders": pending,
+            "active_signal_tickets": dict(self._signal_mt5_tickets),
+        }

@@ -5,6 +5,7 @@ import { Topbar } from './components/layout/Topbar';
 import { LatestSignals } from './components/overview/LatestSignals';
 import { LiveOpenPositions } from './components/overview/LiveOpenPositions';
 import { MarketTickerHero } from './components/overview/MarketTickerHero';
+import { MT5TradingCockpitCard } from './components/overview/MT5TradingCockpitCard';
 import { PaperWalletHeroCard } from './components/overview/PaperWalletHeroCard';
 import { PerformanceCharts } from './components/overview/PerformanceCharts';
 import { PerformanceSummary } from './components/overview/PerformanceSummary';
@@ -256,7 +257,13 @@ export const App: React.FC = () => {
                 onRefresh={() => loadData(true)}
               />
 
-              {/* 2. VÍ ĐẦU TƯ ẢO (0.01 LOT): Hiển thị trực tiếp Lời/Lỗ tiền đô (U) gọn gàng */}
+              {/* 2. MT5 LIVE AUTO-TRADING COCKPIT (Giai đoạn 3): Điều khiển & Giám sát lệnh MT5 thật */}
+              <MT5TradingCockpitCard
+                currentPrice={statusCards.currentPrice || marketOverview.price}
+                onRefreshParent={() => loadData(false)}
+              />
+
+              {/* 3. VÍ ĐẦU TƯ ẢO (0.01 LOT): Hiển thị trực tiếp Lời/Lỗ tiền đô (U) gọn gàng */}
               <PaperWalletHeroCard
                 paperWallet={statusCards.paperWallet}
                 currentPrice={statusCards.currentPrice || marketOverview.price}
